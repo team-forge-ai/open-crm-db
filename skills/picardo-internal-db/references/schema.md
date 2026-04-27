@@ -17,15 +17,15 @@ update this file in the same PR.
 
 ## Enums
 
-| Enum | Values |
-|------|--------|
-| `entity_type` | `organization`, `person` |
-| `interaction_type` | `call`, `meeting`, `email`, `message`, `note`, `event`, `document`, `other` |
-| `interaction_direction` | `inbound`, `outbound`, `internal` |
-| `participant_role` | `host`, `attendee`, `sender`, `recipient`, `cc`, `bcc`, `mentioned`, `observer` |
+| Enum                     | Values                                                                                                                                          |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `entity_type`            | `organization`, `person`                                                                                                                        |
+| `interaction_type`       | `call`, `meeting`, `email`, `message`, `note`, `event`, `document`, `other`                                                                     |
+| `interaction_direction`  | `inbound`, `outbound`, `internal`                                                                                                               |
+| `participant_role`       | `host`, `attendee`, `sender`, `recipient`, `cc`, `bcc`, `mentioned`, `observer`                                                                 |
 | `relationship_edge_type` | `introduced_by`, `reports_to`, `works_with`, `mentor_of`, `investor_of`, `customer_of`, `partner_of`, `parent_org_of`, `subsidiary_of`, `other` |
-| `ai_note_kind` | `summary`, `action_items`, `highlights`, `sentiment`, `coaching`, `risk`, `other` |
-| `transcript_format` | `plain_text`, `srt`, `vtt`, `speaker_turns_jsonl`, `other` |
+| `ai_note_kind`           | `summary`, `action_items`, `highlights`, `sentiment`, `coaching`, `risk`, `other`                                                               |
+| `transcript_format`      | `plain_text`, `srt`, `vtt`, `speaker_turns_jsonl`, `other`                                                                                      |
 
 ## Core entities
 
@@ -99,6 +99,72 @@ Join documents to interactions when a memo summarizes a call, meeting notes
 belong to a calendar event, or a strategy document references prior CRM
 activity. `role` defaults to `related` and can be specialized by ingestion.
 
+## Partnerships
+
+### `partnerships`
+
+Operating layer for strategic, commercial, clinical, and technical partner
+work. `organizations` remain the identity layer; `partnerships` capture the
+pipeline/lifecycle state for a specific collaboration with an organization.
+
+Use `partnership_type` for stable categories such as `genomics`, `labs`,
+`imaging`, `health_share`, `prescriptions`, `supplements`,
+`provider_network`, `data_provider`, or `other`. `stage` tracks the operating
+pipeline: `prospect`, `intro`, `discovery`, `diligence`, `pilot`,
+`contracting`, `live`, `paused`, or `lost`. `priority` is `low`, `medium`,
+`high`, or `strategic`.
+
+`owner_person_id` points at the internal owner when known. `signed_at` and
+`launched_at` distinguish contracting from a live integration. Use
+`strategic_rationale`, `commercial_model`, and `status_notes` for durable
+human-readable context; keep structured details in `metadata`.
+
+### `partnership_people`
+
+Joins partnerships to people with partnership-specific roles such as
+`champion`, `decision_maker`, `technical_contact`, `legal`, `clinical`,
+`commercial`, or `internal_owner`. This table is for relationship management,
+not employment history; use `affiliations` for person-to-organization roles.
+
+### `partnership_interactions`
+
+Joins interactions to partnerships. Use `role` to classify the interaction's
+purpose, such as `intro`, `discovery`, `diligence`, `negotiation`,
+`implementation`, `support`, or `related`.
+
+### `partnership_documents`
+
+Joins contracts, memos, pricing docs, integration notes, diligence artifacts,
+and strategy documents to partnerships. Use `role` values such as `contract`,
+`memo`, `integration_notes`, `pricing`, `security_review`, `clinical_review`,
+or `related`.
+
+### `partnership_services`
+
+Product/service surface exposed by a partnership, for example whole-genome
+sequencing, lab ordering, imaging fulfillment, health-share distribution, or
+prescription fulfillment.
+
+`service_type` names the category, `status` tracks `proposed`, `validating`,
+`build_ready`, `live`, `paused`, or `retired`, and `patient_facing` indicates
+whether members will directly experience the service. `data_modalities` is
+JSON for modalities such as genome files, variants, polygenic risk reports,
+lab results, imaging findings, prescriptions, claims, or eligibility data.
+
+### `partnership_integrations`
+
+Technical integration state for a partnership and optionally a specific
+partnership service. This table records integration shape and readiness, not
+patient data.
+
+`integration_type` is one of `api`, `webhook`, `sftp`, `manual_upload`,
+`pdf_import`, `email`, `portal`, or `other`. `status` tracks `not_started`,
+`sandbox`, `building`, `testing`, `production`, `paused`, or `retired`.
+`sync_direction` is `inbound`, `outbound`, or `bidirectional`.
+`data_formats` stores expected formats such as `FHIR`, `VCF`, `PDF`, `CSV`,
+or a proprietary API schema. `consent_required` and `baa_required` record
+high-level compliance gating without replacing legal review.
+
 ## Interactions
 
 ### `interactions`
@@ -152,8 +218,8 @@ fact. Use provenance generously: facts without provenance are noise.
 ### `tags` / `taggings`
 
 `tags` are global (unique by `slug`). `taggings` is polymorphic over
-`{organization, person, interaction, document}` with a CHECK constraint, and
-`(tag_id, target_type, target_id)` is unique.
+`{organization, person, interaction, document, partnership}` with a CHECK
+constraint, and `(tag_id, target_type, target_id)` is unique.
 
 ### `relationship_edges`
 

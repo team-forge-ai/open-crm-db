@@ -29,6 +29,7 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
+    "export:graph": "node scripts/export-graph.mjs",
     "picardo-db": "tsx src/cli.ts",
     "migrate:up": "tsx src/cli.ts migrate up",
     "migrate:down": "tsx src/cli.ts migrate down",

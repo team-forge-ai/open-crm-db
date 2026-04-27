@@ -16,6 +16,9 @@ dist/
 coverage/
 .vitest/
 
+# generated exports
+visualizations/crm-graph/
+
 # editor / OS
 .DS_Store
 .idea/

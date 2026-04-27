@@ -23,6 +23,7 @@ make writes only when the user asks for data changes or sync work.
 - `references/schema.md`: human-readable entity model.
 - `references/initial-schema.sql`: exact initial DDL, constraints, indexes, enums.
 - `references/add-documents.sql`: document-support migration DDL.
+- `references/add-partnerships*.sql`: partnership operating-layer migration DDL.
 - `references/ai-ingestion.md`: identity, dedupe, idempotency, privacy rules.
 - `references/sync-workflows.md`: SQL patterns for syncing interactions and transcripts.
 - `scripts/psql.sh`: loads credentials and runs `psql` against Neon.

@@ -94,6 +94,8 @@ Top-level entities:
 - `organizations`, `people`, `affiliations`
 - `interactions`, `interaction_participants`
 - `documents`, `document_people`, `document_organizations`, `document_interactions`
+- `partnerships`, `partnership_people`, `partnership_interactions`, `partnership_documents`
+- `partnership_services`, `partnership_integrations`
 - `call_transcripts`, `ai_notes`, `extracted_facts`
 - `tags` / `taggings`, `relationship_edges`
 - `sources`, `external_identities`
