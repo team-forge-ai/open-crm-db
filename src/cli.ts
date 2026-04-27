@@ -94,6 +94,10 @@ export function buildProgram(): Command {
       (v) => Number.parseInt(v, 10),
       10,
     )
+    .option(
+      '--missing-profile-only',
+      'For organizations, only select rows missing the current research profile.',
+    )
     .option('--model <model>', 'Perplexity model id.', 'sonar')
     .option(
       '--perplexity-env-path <path>',

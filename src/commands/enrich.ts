@@ -43,6 +43,7 @@ export interface EnrichOptions {
   entity?: EntityOption
   force?: boolean
   limit?: number
+  missingProfileOnly?: boolean
   model?: string
   perplexityEnvPath?: string
   searchContext?: SearchContextSize
@@ -178,7 +179,12 @@ export async function enrich(options: EnrichOptions = {}): Promise<void> {
     )
 
     if (entity === 'organizations' || entity === 'both') {
-      await enrichOrganizations(ctx, apiKey, limit, Boolean(options.force))
+      await enrichOrganizations(ctx, {
+        apiKey,
+        limit,
+        force: Boolean(options.force),
+        missingProfileOnly: Boolean(options.missingProfileOnly),
+      })
     }
 
     if (entity === 'people' || entity === 'both') {
@@ -261,38 +267,51 @@ function normalizeEntitySelection(entity: EntityOption): EntitySelection {
 
 async function enrichOrganizations(
   ctx: EnrichmentContext,
-  apiKey: string,
-  limit: number,
-  force: boolean,
+  options: {
+    apiKey: string
+    limit: number
+    force: boolean
+    missingProfileOnly: boolean
+  },
 ): Promise<void> {
-  const candidates = await fetchOrganizationCandidates(ctx.pool, limit, force)
+  const candidates = await fetchOrganizationCandidates(ctx.pool, {
+    limit: options.limit,
+    force: options.force,
+    missingProfileOnly: options.missingProfileOnly,
+  })
   console.log(`Found ${candidates.length} organization candidate(s).`)
 
   for (const candidate of candidates) {
-    const enrichment = await generateOrganizationEnrichment(
-      apiKey,
-      ctx.modelId,
-      ctx.searchContext,
-      candidate,
-    )
-    const updates = organizationUpdates(candidate, enrichment)
-    const facts = normalizeFacts(enrichment.facts)
-
-    console.log(
-      `${ctx.apply ? 'Applying' : 'Would enrich'} organization ${candidate.name}: ${describeOrganizationChanges(
-        enrichment,
-        updates,
-        facts,
-      )}`,
-    )
-
-    if (ctx.apply) {
-      await writeOrganizationEnrichment(
-        ctx,
+    try {
+      const enrichment = await generateOrganizationEnrichment(
+        options.apiKey,
+        ctx.modelId,
+        ctx.searchContext,
         candidate,
-        enrichment,
-        updates,
-        facts,
+      )
+      const updates = organizationUpdates(candidate, enrichment)
+      const facts = normalizeFacts(enrichment.facts)
+
+      console.log(
+        `${ctx.apply ? 'Applying' : 'Would enrich'} organization ${candidate.name}: ${describeOrganizationChanges(
+          enrichment,
+          updates,
+          facts,
+        )}`,
+      )
+
+      if (ctx.apply) {
+        await writeOrganizationEnrichment(
+          ctx,
+          candidate,
+          enrichment,
+          updates,
+          facts,
+        )
+      }
+    } catch (err) {
+      console.error(
+        `Skipping organization ${candidate.name}: ${errorMessage(err)}`,
       )
     }
   }
@@ -462,8 +481,7 @@ Facts must have stable snake_case keys, a short valueText, confidence from 0 to 
 
 async function fetchOrganizationCandidates(
   pool: pg.Pool,
-  limit: number,
-  force: boolean,
+  options: { limit: number; force: boolean; missingProfileOnly: boolean },
 ): Promise<OrganizationCandidate[]> {
   const result = await pool.query<OrganizationCandidate>(
     `
@@ -486,10 +504,26 @@ async function fetchOrganizationCandidates(
       left join people p on p.id = a.person_id and p.archived_at is null
       where o.archived_at is null
         and (
-          $2::boolean
-          or o.description is null
-          or o.industry is null
-          or o.website is null
+          (
+            not exists (
+              select 1
+                from organization_research_profiles orp
+               where orp.organization_id = o.id
+                 and orp.prompt_fingerprint = $3
+            )
+          )
+          or (
+            not $4::boolean
+            and (
+              $2::boolean
+              or o.description is null
+              or o.industry is null
+              or o.website is null
+            )
+          )
+        )
+        and (
+          not $4::boolean
           or not exists (
             select 1
               from organization_research_profiles orp
@@ -501,7 +535,12 @@ async function fetchOrganizationCandidates(
       order by (o.metadata ? 'perplexity_enrichment') desc, o.updated_at asc
       limit $1
     `,
-    [limit, force, PROMPT_FINGERPRINT],
+    [
+      options.limit,
+      options.force,
+      PROMPT_FINGERPRINT,
+      options.missingProfileOnly,
+    ],
   )
   return result.rows
 }
@@ -1200,6 +1239,10 @@ function nonNullable<T>(value: T | null | undefined): value is T {
 
 function uniqueStrings(values: string[]): string[] {
   return [...new Set(values)]
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err)
 }
 
 function requireSourceId(ctx: EnrichmentContext): string {
