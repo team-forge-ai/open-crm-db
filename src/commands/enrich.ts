@@ -361,6 +361,7 @@ async function generateOrganizationEnrichment(
     schema: organizationSchema,
     temperature: 0,
     maxOutputTokens: 1200,
+    experimental_repairText: async ({ text }) => extractJsonObjectText(text),
     providerOptions: {
       perplexity: {
         web_search_options: {
@@ -432,6 +433,7 @@ async function generatePersonEnrichment(
     schema: personSchema,
     temperature: 0,
     maxOutputTokens: 1200,
+    experimental_repairText: async ({ text }) => extractJsonObjectText(text),
     providerOptions: {
       perplexity: {
         web_search_options: {
@@ -1243,6 +1245,21 @@ function uniqueStrings(values: string[]): string[] {
 
 function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err)
+}
+
+function extractJsonObjectText(text: string): string | null {
+  const fenced = /```(?:json)?\s*([\s\S]*?)```/i.exec(text)
+  if (fenced?.[1]) {
+    return fenced[1].trim()
+  }
+
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start >= 0 && end > start) {
+    return text.slice(start, end + 1)
+  }
+
+  return null
 }
 
 function requireSourceId(ctx: EnrichmentContext): string {

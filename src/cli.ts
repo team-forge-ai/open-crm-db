@@ -6,6 +6,10 @@ import { migrateStatus } from './commands/migrate-status.js'
 import { migrateUp } from './commands/migrate-up.js'
 import { info } from './commands/info.js'
 import { enrich, type EnrichOptions } from './commands/enrich.js'
+import {
+  backfillEmbeddings,
+  type BackfillEmbeddingsOptions,
+} from './commands/backfill-embeddings.js'
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -61,6 +65,61 @@ export function buildProgram(): Command {
     .description('Scaffold a new SQL migration file.')
     .action(async (name: string) => {
       await migrateCreate({ name })
+    })
+
+  const embeddings = program
+    .command('embeddings')
+    .description('Generate and backfill local semantic-search embeddings.')
+
+  embeddings
+    .command('backfill')
+    .description(
+      'Backfill semantic_embeddings from CRM source records using local Ollama.',
+    )
+    .option(
+      '--apply',
+      'Write embeddings. Defaults to dry-run without calling the embedding model.',
+    )
+    .option(
+      '--batch-size <n>',
+      'Embedding request batch size.',
+      (v) => Number.parseInt(v, 10),
+    )
+    .option(
+      '--chunk-overlap <n>',
+      'Overlapping characters between adjacent chunks.',
+      (v) => Number.parseInt(v, 10),
+    )
+    .option(
+      '--chunk-size <n>',
+      'Maximum characters per source text chunk.',
+      (v) => Number.parseInt(v, 10),
+    )
+    .option(
+      '--credentials-env-path <path>',
+      'Path to a local env file containing DATABASE_URL.',
+    )
+    .option('--force', 'Re-embed records even when active chunk hashes match.')
+    .option(
+      '--limit <n>',
+      'Maximum source records to inspect.',
+      (v) => Number.parseInt(v, 10),
+    )
+    .option('--model <model>', 'Ollama embedding model.', 'embeddinggemma')
+    .option('--model-version <version>', 'Model version label.', 'latest')
+    .option(
+      '--ollama-url <url>',
+      'Base URL for local Ollama.',
+      'http://localhost:11434',
+    )
+    .option('--provider <provider>', 'Embedding provider label.', 'ollama')
+    .option(
+      '--target-type <types>',
+      'Comma-separated target types to backfill. Defaults to all supported types.',
+    )
+    .option('--verbose', 'Print one line per stale source record.')
+    .action(async (opts: BackfillEmbeddingsOptions) => {
+      await backfillEmbeddings(opts)
     })
 
   program

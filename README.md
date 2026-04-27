@@ -38,6 +38,8 @@ pnpm picardo-db migrate down              # revert the most recent migration
 pnpm picardo-db migrate down -n 2         # revert the last two
 pnpm picardo-db migrate status            # applied vs pending
 pnpm picardo-db migrate create "add foo"  # scaffold a new SQL migration
+pnpm picardo-db embeddings backfill        # dry-run local semantic embedding backfill
+pnpm picardo-db embeddings backfill --apply # write local Ollama embeddings
 pnpm enrich:crm --limit 5                 # dry-run public CRM enrichment
 pnpm enrich:crm --apply --limit 5         # write enrichment facts/notes
 ```
@@ -165,6 +167,19 @@ curl -X POST http://localhost:11434/api/embed \
 Use the same embedding model for indexing and querying. If you switch to a
 model with a different vector length, add a SQL migration for the new dimension
 instead of mixing dimensions in the same index.
+
+Backfill active CRM records into chunk-level embeddings with local Ollama:
+
+```sh
+pnpm picardo-db embeddings backfill
+pnpm picardo-db embeddings backfill --apply
+pnpm picardo-db embeddings backfill --apply --target-type document,call_transcript
+```
+
+The command is dry-run by default, skips unchanged chunks by SHA-256 hash, and
+archives stale extra chunks when source content gets shorter. It loads
+`DATABASE_URL` from `.env` or the local skill credentials file, and sends source
+text only to the configured local Ollama URL.
 
 Direct source-record full-text indexes intentionally cap very long text inputs
 to stay under Postgres' per-row `tsvector` limit. Full long-form coverage should
