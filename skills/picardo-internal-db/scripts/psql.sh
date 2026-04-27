@@ -27,6 +27,15 @@ if [[ "${PSQL_DATABASE_URL}" == *"sslmode=verify-full"* && "${PSQL_DATABASE_URL}
 fi
 
 if ! command -v psql >/dev/null 2>&1; then
+  for candidate in /opt/homebrew/opt/libpq/bin /usr/local/opt/libpq/bin; do
+    if [[ -x "${candidate}/psql" ]]; then
+      PATH="${candidate}:${PATH}"
+      break
+    fi
+  done
+fi
+
+if ! command -v psql >/dev/null 2>&1; then
   echo "psql is required but was not found on PATH." >&2
   exit 1
 fi
