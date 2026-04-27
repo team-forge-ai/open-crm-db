@@ -23,4 +23,11 @@ export {
 } from './migrations.js'
 
 export { runMigrations } from './runner.js'
+export {
+  buildPgDumpConnectionEnv,
+  dumpSchema,
+  filterSchemaDump,
+  type PgDumpConnectionEnv,
+  type SchemaDumpOptions,
+} from './schema-dump.js'
 export { buildProgram } from './cli.js'
