@@ -38,6 +38,8 @@ pnpm picardo-db migrate down              # revert the most recent migration
 pnpm picardo-db migrate down -n 2         # revert the last two
 pnpm picardo-db migrate status            # applied vs pending
 pnpm picardo-db migrate create "add foo"  # scaffold a new SQL migration
+pnpm enrich:crm --limit 5                 # dry-run public CRM enrichment
+pnpm enrich:crm --apply --limit 5         # write enrichment facts/notes
 ```
 
 After `pnpm build`, the same CLI is available as `picardo-db` (via the `bin`
@@ -89,9 +91,29 @@ for the contract an AI agent should follow when populating the database.
 `schema.sql` is a generated convenience snapshot of the current database schema.
 Schema changes should still be authored as timestamped SQL migrations.
 
+## CRM enrichment
+
+`picardo-db enrich` uses Perplexity's cheapest Sonar API model (`sonar`) through
+Vercel's AI SDK to fill blank public profile fields for `organizations` and
+`people`, then append provenance-backed `extracted_facts` and `ai_notes` when
+run with `--apply`.
+
+The command defaults to dry-run mode:
+
+```sh
+pnpm enrich:crm --limit 5
+pnpm enrich:crm --entity organizations --apply --limit 10
+```
+
+It loads `DATABASE_URL` from `.env` or the local skill credentials file, and
+loads `PERPLEXITY_API_KEY` from the environment or
+`~/repos/cursor-agent/.env`. The default search context is `low` to keep
+Perplexity request cost down; use `--search-context medium` or `high` only when
+you need broader source context.
+
 Top-level entities:
 
-- `organizations`, `people`, `affiliations`
+- `organizations`, `organization_research_profiles`, `people`, `affiliations`
 - `interactions`, `interaction_participants`
 - `documents`, `document_people`, `document_organizations`, `document_interactions`
 - `partnerships`, `partnership_people`, `partnership_interactions`, `partnership_documents`

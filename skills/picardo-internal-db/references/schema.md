@@ -35,6 +35,20 @@ Companies, institutions, counterparties. Identified by `name` plus optional
 `domain` (citext) and `slug`. Use `external_identities` to record IDs from
 HubSpot, Google Contacts, etc.
 
+### `organization_research_profiles`
+
+Structured public research profile for an organization, usually produced by
+AI-assisted web enrichment. This table keeps CRM intelligence queryable without
+overloading `organizations.metadata`: public canonical identity, one-line
+description, category, healthcare relevance, partnership fit, offerings,
+likely Picardo use cases, integration/compliance signals, key public people,
+suggested tags, review flags, source URLs, and the raw enrichment payload.
+
+`(organization_id, prompt_fingerprint)` is unique so rerunning the same
+research prompt updates the current profile instead of creating duplicate
+profiles. Durable source-backed claims should still be appended to
+`extracted_facts`.
+
 ### `people`
 
 Individual humans. `primary_email` is convenience; the canonical list lives in

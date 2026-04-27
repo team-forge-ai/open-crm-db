@@ -5,7 +5,7 @@ describe('buildProgram', () => {
   it('exposes all expected commands', () => {
     const program = buildProgram()
     const top = program.commands.map((c) => c.name())
-    expect(top).toEqual(expect.arrayContaining(['migrate', 'info']))
+    expect(top).toEqual(expect.arrayContaining(['migrate', 'info', 'enrich']))
 
     const migrate = program.commands.find((c) => c.name() === 'migrate')!
     const sub = migrate.commands.map((c) => c.name())
@@ -20,5 +20,6 @@ describe('buildProgram', () => {
     expect(help).toContain('picardo-db')
     expect(help).toContain('migrate')
     expect(help).toContain('info')
+    expect(help).toContain('enrich')
   })
 })

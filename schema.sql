@@ -381,6 +381,40 @@ CREATE TABLE public.interactions (
 
 
 --
+-- Name: organization_research_profiles; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.organization_research_profiles (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    organization_id uuid NOT NULL,
+    source_id uuid,
+    model text,
+    model_version text,
+    prompt_fingerprint text NOT NULL,
+    canonical_name text,
+    website text,
+    domain public.citext,
+    one_line_description text,
+    category text,
+    healthcare_relevance text,
+    partnership_fit text,
+    partnership_fit_rationale text,
+    offerings jsonb DEFAULT '[]'::jsonb NOT NULL,
+    likely_use_cases jsonb DEFAULT '[]'::jsonb NOT NULL,
+    integration_signals jsonb DEFAULT '[]'::jsonb NOT NULL,
+    compliance_signals jsonb DEFAULT '[]'::jsonb NOT NULL,
+    key_public_people jsonb DEFAULT '[]'::jsonb NOT NULL,
+    suggested_tags jsonb DEFAULT '[]'::jsonb NOT NULL,
+    review_flags jsonb DEFAULT '[]'::jsonb NOT NULL,
+    source_urls jsonb DEFAULT '[]'::jsonb NOT NULL,
+    raw_enrichment jsonb DEFAULT '{}'::jsonb NOT NULL,
+    researched_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: organizations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -844,6 +878,22 @@ ALTER TABLE ONLY public.interactions
 
 
 --
+-- Name: organization_research_profiles organization_research_profile_organization_id_prompt_finger_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_research_profiles
+    ADD CONSTRAINT organization_research_profile_organization_id_prompt_finger_key UNIQUE (organization_id, prompt_fingerprint);
+
+
+--
+-- Name: organization_research_profiles organization_research_profiles_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_research_profiles
+    ADD CONSTRAINT organization_research_profiles_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: organizations organizations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -1262,6 +1312,27 @@ CREATE INDEX idx_interactions_type ON public.interactions USING btree (type);
 
 
 --
+-- Name: idx_organization_research_profiles_category; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_organization_research_profiles_category ON public.organization_research_profiles USING btree (category);
+
+
+--
+-- Name: idx_organization_research_profiles_org; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_organization_research_profiles_org ON public.organization_research_profiles USING btree (organization_id);
+
+
+--
+-- Name: idx_organization_research_profiles_researched_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_organization_research_profiles_researched_at ON public.organization_research_profiles USING btree (researched_at DESC);
+
+
+--
 -- Name: idx_organizations_archived; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1654,6 +1725,13 @@ CREATE TRIGGER trg_interactions_updated_at BEFORE UPDATE ON public.interactions 
 
 
 --
+-- Name: organization_research_profiles trg_organization_research_profiles_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_organization_research_profiles_updated_at BEFORE UPDATE ON public.organization_research_profiles FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
 -- Name: organizations trg_organizations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -1926,6 +2004,22 @@ ALTER TABLE ONLY public.interaction_participants
 
 ALTER TABLE ONLY public.interactions
     ADD CONSTRAINT interactions_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: organization_research_profiles organization_research_profiles_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_research_profiles
+    ADD CONSTRAINT organization_research_profiles_organization_id_fkey FOREIGN KEY (organization_id) REFERENCES public.organizations(id) ON DELETE CASCADE;
+
+
+--
+-- Name: organization_research_profiles organization_research_profiles_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.organization_research_profiles
+    ADD CONSTRAINT organization_research_profiles_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
 
 
 --

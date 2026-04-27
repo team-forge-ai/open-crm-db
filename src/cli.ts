@@ -5,6 +5,7 @@ import { migrateDown } from './commands/migrate-down.js'
 import { migrateStatus } from './commands/migrate-status.js'
 import { migrateUp } from './commands/migrate-up.js'
 import { info } from './commands/info.js'
+import { enrich, type EnrichOptions } from './commands/enrich.js'
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -22,10 +23,8 @@ export function buildProgram(): Command {
   migrate
     .command('up')
     .description('Apply all pending migrations.')
-    .option(
-      '-n, --count <n>',
-      'Apply at most N pending migrations.',
-      (v) => Number.parseInt(v, 10),
+    .option('-n, --count <n>', 'Apply at most N pending migrations.', (v) =>
+      Number.parseInt(v, 10),
     )
     .action(async (opts: { count?: number }) => {
       await migrateUp(
@@ -71,7 +70,80 @@ export function buildProgram(): Command {
       info()
     })
 
+  program
+    .command('enrich')
+    .description(
+      'Enrich organizations and people from public web sources using Perplexity Sonar.',
+    )
+    .option(
+      '--apply',
+      'Write updates, extracted facts, and AI notes. Defaults to dry-run.',
+    )
+    .option(
+      '--entity <entity>',
+      'Which entities to enrich: organizations/companies, people/contacts, or both.',
+      'both',
+    )
+    .option(
+      '--force',
+      'Include rows already marked with prior Perplexity enrichment metadata.',
+    )
+    .option(
+      '--limit <n>',
+      'Maximum rows per selected entity type.',
+      (v) => Number.parseInt(v, 10),
+      10,
+    )
+    .option('--model <model>', 'Perplexity model id.', 'sonar')
+    .option(
+      '--perplexity-env-path <path>',
+      'Path to an env file containing PERPLEXITY_API_KEY.',
+    )
+    .option(
+      '--search-context <size>',
+      'Perplexity search context size: low, medium, or high.',
+      'low',
+    )
+    .action(async (opts: EnrichOptions) => {
+      await enrich(validateEnrichOptions(opts))
+    })
+
   return program
+}
+
+function validateEnrichOptions(opts: EnrichOptions): EnrichOptions {
+  const entity = normalizeEntityOption(opts.entity ?? 'both')
+  if (!entity) {
+    throw new Error(
+      '--entity must be one of: organizations, companies, people, contacts, both.',
+    )
+  }
+
+  const searchContext = opts.searchContext ?? 'low'
+  if (!['low', 'medium', 'high'].includes(searchContext)) {
+    throw new Error('--search-context must be one of: low, medium, high.')
+  }
+
+  return {
+    ...opts,
+    entity,
+    searchContext,
+  }
+}
+
+function normalizeEntityOption(
+  entity: EnrichOptions['entity'],
+): 'organizations' | 'people' | 'both' | null {
+  if (entity === 'companies') {
+    return 'organizations'
+  }
+  if (entity === 'contacts') {
+    return 'people'
+  }
+  if (entity === 'organizations' || entity === 'people' || entity === 'both') {
+    return entity
+  }
+  return null
 }
 
 async function main(): Promise<void> {
