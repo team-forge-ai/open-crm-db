@@ -63,6 +63,7 @@ Useful options:
 scripts/search.sh "query" --no-semantic
 scripts/search.sh "query" --no-full-text
 scripts/search.sh "query" --mlx-model mlx-community/embeddinggemma-300m-4bit
+scripts/search.sh "query" --mlx-model-version 4bit
 scripts/search.sh "query" --query-prefix ""
 scripts/search.sh "query" --min-similarity 0.3
 scripts/search.sh "query" --snippet-chars 300

@@ -10,6 +10,7 @@ Options:
   --limit N                  Results per search path, 1-100. Default: 10.
   --target-types a,b,c       Comma-separated target_type filter.
   --mlx-model MODEL           MLX embedding model. Default: mlx-community/embeddinggemma-300m-4bit.
+  --mlx-model-version TEXT    MLX embedding model version. Default: 4bit.
   --query-prefix TEXT         Prefix added to semantic queries. Default: task: search result | query: .
   --min-similarity N         Minimum semantic similarity. Default: 0.35.
   --snippet-chars N          Max excerpt characters. Default: 500.
@@ -44,6 +45,7 @@ QUERY=""
 LIMIT="10"
 TARGET_TYPES=""
 MLX_MODEL="${MLX_EMBEDDING_MODEL:-mlx-community/embeddinggemma-300m-4bit}"
+MLX_MODEL_VERSION="${MLX_EMBEDDING_MODEL_VERSION:-4bit}"
 QUERY_PREFIX="${PICARDO_SEARCH_QUERY_PREFIX:-task: search result | query: }"
 MIN_SIMILARITY="0.35"
 SNIPPET_CHARS="500"
@@ -66,6 +68,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --mlx-model)
       MLX_MODEL="${2:-}"
+      shift 2
+      ;;
+    --mlx-model-version)
+      MLX_MODEL_VERSION="${2:-}"
       shift 2
       ;;
     --query-prefix)
@@ -139,6 +145,8 @@ run_psql() {
     -v search_query="${QUERY}" \
     -v result_limit="${LIMIT}" \
     -v target_types="${TARGET_TYPES}" \
+    -v embedding_model="${MLX_MODEL}" \
+    -v embedding_model_version="${MLX_MODEL_VERSION}" \
     -v snippet_chars="${SNIPPET_CHARS}" \
     "$@"
 }
@@ -194,7 +202,10 @@ select jsonb_build_object(
   'content', left(regexp_replace(content, '\s+', ' ', 'g'), :snippet_chars),
   'metadata', metadata
 )::text
-from match_full_text_embeddings(:'search_query', :result_limit, (select target_types from filter));
+from match_full_text_embeddings(:'search_query', :result_limit, (select target_types from filter))
+where embedding_provider = 'mlx'
+  and embedding_model = :'embedding_model'
+  and embedding_model_version = :'embedding_model_version';
 SQL
 fi
 
@@ -232,6 +243,8 @@ PY
     -v query_embedding="${QUERY_EMBEDDING}" \
     -v result_limit="${LIMIT}" \
     -v target_types="${TARGET_TYPES}" \
+    -v embedding_model="${MLX_MODEL}" \
+    -v embedding_model_version="${MLX_MODEL_VERSION}" \
     -v min_similarity="${MIN_SIMILARITY}" \
     -v snippet_chars="${SNIPPET_CHARS}" <<'SQL'
 \pset footer off
@@ -261,6 +274,9 @@ select jsonb_build_object(
   'metadata', metadata
 )::text
 from match_semantic_embeddings(:'query_embedding'::vector, :result_limit, (select target_types from filter)) m
-where m.similarity >= (:min_similarity)::double precision;
+where m.embedding_provider = 'mlx'
+  and m.embedding_model = :'embedding_model'
+  and m.embedding_model_version = :'embedding_model_version'
+  and m.similarity >= (:min_similarity)::double precision;
 SQL
 fi
