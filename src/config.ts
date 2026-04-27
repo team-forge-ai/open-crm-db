@@ -17,6 +17,8 @@ export interface PicardoDbConfig {
   migrationsTable: string
   /** Migrations tracking table schema. Default: public. */
   migrationsSchema: string
+  /** Local path where the current schema-only dump is written after migrations. */
+  schemaDumpPath: string
 }
 
 export interface ConfigOptions {
@@ -63,6 +65,7 @@ export function loadConfig(options: ConfigOptions = {}): PicardoDbConfig {
     migrationTemplate: path.join(repoRoot, 'templates', 'migration.sql'),
     migrationsTable: process.env.PICARDO_DB_MIGRATIONS_TABLE || 'pgmigrations',
     migrationsSchema: process.env.PICARDO_DB_MIGRATIONS_SCHEMA || 'public',
+    schemaDumpPath: resolveSchemaDumpPath(repoRoot),
   }
 }
 
@@ -74,7 +77,11 @@ export function loadPaths(
   options: Pick<ConfigOptions, 'repoRoot' | 'skipDotenv'> = {},
 ): Pick<
   PicardoDbConfig,
-  'migrationsDir' | 'migrationTemplate' | 'migrationsTable' | 'migrationsSchema'
+  | 'migrationsDir'
+  | 'migrationTemplate'
+  | 'migrationsTable'
+  | 'migrationsSchema'
+  | 'schemaDumpPath'
 > {
   if (!options.skipDotenv) {
     dotenv.config()
@@ -85,5 +92,16 @@ export function loadPaths(
     migrationTemplate: path.join(repoRoot, 'templates', 'migration.sql'),
     migrationsTable: process.env.PICARDO_DB_MIGRATIONS_TABLE || 'pgmigrations',
     migrationsSchema: process.env.PICARDO_DB_MIGRATIONS_SCHEMA || 'public',
+    schemaDumpPath: resolveSchemaDumpPath(repoRoot),
   }
+}
+
+function resolveSchemaDumpPath(repoRoot: string): string {
+  const configured = process.env.PICARDO_DB_SCHEMA_DUMP_PATH
+  if (!configured) {
+    return path.join(repoRoot, 'schema.sql')
+  }
+  return path.isAbsolute(configured)
+    ? configured
+    : path.join(repoRoot, configured)
 }

@@ -9,6 +9,7 @@ beforeEach(() => {
   delete process.env.DATABASE_URL
   delete process.env.PICARDO_DB_MIGRATIONS_TABLE
   delete process.env.PICARDO_DB_MIGRATIONS_SCHEMA
+  delete process.env.PICARDO_DB_SCHEMA_DUMP_PATH
 })
 
 afterEach(() => {
@@ -33,11 +34,13 @@ describe('loadConfig', () => {
     )
     expect(config.migrationsTable).toBe('pgmigrations')
     expect(config.migrationsSchema).toBe('public')
+    expect(config.schemaDumpPath).toBe('/tmp/picardo-fake/schema.sql')
   })
 
   it('honors custom migrations table/schema env vars', () => {
     process.env.PICARDO_DB_MIGRATIONS_TABLE = 'picardo_migrations'
     process.env.PICARDO_DB_MIGRATIONS_SCHEMA = 'meta'
+    process.env.PICARDO_DB_SCHEMA_DUMP_PATH = 'tmp/schema.sql'
     const config = loadConfig({
       skipDotenv: true,
       databaseUrl: 'postgres://example/db',
@@ -45,6 +48,7 @@ describe('loadConfig', () => {
     })
     expect(config.migrationsTable).toBe('picardo_migrations')
     expect(config.migrationsSchema).toBe('meta')
+    expect(config.schemaDumpPath).toBe('/tmp/picardo-fake/tmp/schema.sql')
   })
 })
 
@@ -55,6 +59,7 @@ describe('loadPaths', () => {
     expect(paths.migrationTemplate).toBe(
       '/tmp/picardo-fake/templates/migration.sql',
     )
+    expect(paths.schemaDumpPath).toBe('/tmp/picardo-fake/schema.sql')
   })
 })
 

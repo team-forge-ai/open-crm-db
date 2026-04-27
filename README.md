@@ -51,6 +51,7 @@ src/                TypeScript source for the CLI
   config.ts         Env / path resolution
   migrations.ts     File-system + DB helpers (slugify, list, diff, create)
   runner.ts         Thin wrapper around node-pg-migrate
+  schema-dump.ts    pg_dump wrapper that refreshes schema.sql after migrations
   commands/         One file per CLI command
   __tests__/        Vitest unit tests
 migrations/         SQL migrations applied in timestamp order
@@ -75,12 +76,18 @@ skills/             local AI skill for safe CRM database operations
 
 - Tracking table: `public.pgmigrations` (override with
   `PICARDO_DB_MIGRATIONS_TABLE` / `PICARDO_DB_MIGRATIONS_SCHEMA`).
+- After a successful `migrate up` or `migrate down`, the CLI refreshes
+  `schema.sql` with `pg_dump --schema-only --no-owner --no-privileges`.
+  Override the output path with `PICARDO_DB_SCHEMA_DUMP_PATH`.
 
 ## Schema
 
 See [`docs/internal-db/schema.md`](docs/internal-db/schema.md) for the full
 entity model and [`docs/internal-db/ai-ingestion.md`](docs/internal-db/ai-ingestion.md)
 for the contract an AI agent should follow when populating the database.
+
+`schema.sql` is a generated convenience snapshot of the current database schema.
+Schema changes should still be authored as timestamped SQL migrations.
 
 Top-level entities:
 

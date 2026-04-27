@@ -1,5 +1,6 @@
 import runner from 'node-pg-migrate'
 import type { PicardoDbConfig } from './config.js'
+import { dumpSchema } from './schema-dump.js'
 
 /**
  * Thin wrapper around node-pg-migrate's programmatic runner. Centralizing the
@@ -23,4 +24,10 @@ export async function runMigrations(params: {
     count: params.count,
     verbose: true,
   })
+
+  const target = await dumpSchema({
+    databaseUrl: params.config.databaseUrl,
+    outputPath: params.config.schemaDumpPath,
+  })
+  console.log(`Schema dumped to ${target}`)
 }
