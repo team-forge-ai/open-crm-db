@@ -188,10 +188,14 @@ search, chunk-level full-text search, or both.
 
 ## Local AI skill
 
-This repo includes a reusable local skill at
-[`skills/picardo-internal-db`](skills/picardo-internal-db). It contains schema
-references, ingestion workflows, and a `psql` helper for agents that need to
-sync transcripts, conversations, documents, notes, and extracted facts.
+This repo includes reusable local skills under [`skills/`](skills/):
+
+- [`skills/picardo-internal-db`](skills/picardo-internal-db) contains schema
+  references, ingestion workflows, and a `psql` helper for agents that need to
+  sync transcripts, conversations, documents, notes, and extracted facts.
+- [`skills/picardo-db-search`](skills/picardo-db-search) contains a read-only
+  hybrid search workflow that combines Postgres full-text search with local
+  Ollama `embeddinggemma` semantic search.
 
 Live database credentials are not committed. To enable the helper, copy
 `skills/picardo-internal-db/references/credentials.env.example` to
