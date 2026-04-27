@@ -14,6 +14,8 @@ update this file in the same PR.
 - All timestamps are `timestamptz`. Never use plain `timestamp`.
 - Free-form structured data lives in `metadata jsonb NOT NULL DEFAULT '{}'`.
 - Email columns use the `citext` extension so equality is case-insensitive.
+- Lightweight lexical search uses Postgres full-text search plus `pg_trgm`.
+  Search indexes are expression indexes, not stored `tsvector` columns.
 - Semantic search uses the `vector` extension. Current embeddings are
   `vector(768)` so every indexed chunk must be generated with the same
   768-dimension model family before insertion.
@@ -248,6 +250,25 @@ using another dimension requires a follow-up migration.
 `match_semantic_embeddings(query_embedding, match_count, filter_target_types)`
 performs cosine search over non-archived chunks and caps result count at 100.
 Use the same embedding model for indexing and querying.
+
+### Search helpers
+
+`search_crm_full_text(search_query, match_count, filter_target_types)` performs
+ranked keyword search across active CRM source records: organizations, people,
+interactions, call transcripts, documents, AI notes, extracted facts,
+organization research profiles, partnerships, services, and integrations.
+Results include a type/id pair, title, subtitle, timestamp, rank, headline, and
+metadata.
+
+`match_full_text_embeddings(search_query, match_count, filter_target_types)`
+performs ranked keyword search over active `semantic_embeddings.content` chunks
+and returns the same target/chunk shape as `match_semantic_embeddings`, with a
+full-text rank instead of vector similarity. Use it alongside semantic search
+for hybrid retrieval.
+
+Direct source-record indexes cap very large text fields before building
+`tsvector` values to avoid Postgres' per-row size limit. Full long-form
+coverage should come from chunking content into `semantic_embeddings`.
 
 ## Flexible structures
 

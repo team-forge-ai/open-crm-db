@@ -22,6 +22,20 @@ COMMENT ON EXTENSION citext IS 'data type for case-insensitive character strings
 
 
 --
+-- Name: pg_trgm; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS pg_trgm WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION pg_trgm; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION pg_trgm IS 'text similarity measurement and index searching based on trigrams';
+
+
+--
 -- Name: pgcrypto; Type: EXTENSION; Schema: -; Owner: -
 --
 
@@ -149,6 +163,40 @@ CREATE TYPE public.transcript_format AS ENUM (
 
 
 --
+-- Name: match_full_text_embeddings(text, integer, text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.match_full_text_embeddings(search_query text, match_count integer DEFAULT 10, filter_target_types text[] DEFAULT NULL::text[]) RETURNS TABLE(id uuid, target_type text, target_id uuid, chunk_index integer, content text, embedding_provider text, embedding_model text, embedding_model_version text, metadata jsonb, rank real)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH query AS (
+    SELECT websearch_to_tsquery('english', COALESCE(search_query, '')) AS tsq
+  )
+  SELECT
+    se.id,
+    se.target_type,
+    se.target_id,
+    se.chunk_index,
+    se.content,
+    se.embedding_provider,
+    se.embedding_model,
+    se.embedding_model_version,
+    se.metadata,
+    ts_rank_cd(to_tsvector('english', se.content), query.tsq, 32) AS rank
+  FROM semantic_embeddings se
+  CROSS JOIN query
+  WHERE se.archived_at IS NULL
+    AND to_tsvector('english', se.content) @@ query.tsq
+    AND (
+      filter_target_types IS NULL
+      OR se.target_type = ANY(filter_target_types)
+    )
+  ORDER BY rank DESC, se.embedded_at DESC
+  LIMIT LEAST(GREATEST(COALESCE(match_count, 10), 1), 100);
+$$;
+
+
+--
 -- Name: match_semantic_embeddings(public.vector, integer, text[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -178,6 +226,17 @@ $$;
 
 
 --
+-- Name: picardo_search_text(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picardo_search_text(VARIADIC parts text[]) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$
+  SELECT COALESCE(array_to_string(parts, ' ', ''), '');
+$$;
+
+
+--
 -- Name: picardo_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -188,6 +247,350 @@ BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
 END;
+$$;
+
+
+--
+-- Name: search_crm_full_text(text, integer, text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integer DEFAULT 20, filter_target_types text[] DEFAULT NULL::text[]) RETURNS TABLE(target_type text, target_id uuid, title text, subtitle text, occurred_at timestamp with time zone, rank real, headline text, metadata jsonb)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH query AS (
+    SELECT websearch_to_tsquery('english', COALESCE(search_query, '')) AS tsq
+  ),
+  ranked AS (
+    SELECT
+      'organization'::text AS target_type,
+      o.id AS target_id,
+      o.name AS title,
+      concat_ws(' / ', o.domain::text, o.industry, o.hq_country) AS subtitle,
+      o.updated_at AS occurred_at,
+      ts_rank_cd(
+        to_tsvector(
+          'english',
+          picardo_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
+        ),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', o.name, o.legal_name, o.description, o.industry, o.notes),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      o.metadata AS metadata
+    FROM organizations o
+    CROSS JOIN query
+    WHERE o.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'organization' = ANY(filter_target_types))
+      AND to_tsvector(
+        'english',
+        picardo_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
+      ) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'person'::text AS target_type,
+      p.id AS target_id,
+      p.full_name AS title,
+      concat_ws(' / ', p.headline, p.city, p.country) AS subtitle,
+      p.updated_at AS occurred_at,
+      ts_rank_cd(
+        to_tsvector(
+          'english',
+          picardo_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
+        ),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', p.full_name, p.headline, p.summary, p.notes),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      p.metadata AS metadata
+    FROM people p
+    CROSS JOIN query
+    WHERE p.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'person' = ANY(filter_target_types))
+      AND to_tsvector(
+        'english',
+        picardo_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
+      ) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'interaction'::text AS target_type,
+      i.id AS target_id,
+      COALESCE(i.subject, i.type::text) AS title,
+      concat_ws(' / ', i.type::text, i.direction::text, i.location) AS subtitle,
+      i.occurred_at,
+      ts_rank_cd(to_tsvector('english', picardo_search_text(i.subject, left(i.body, 250000), i.location)), query.tsq, 32) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', i.subject, left(i.body, 250000), i.location),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      i.metadata AS metadata
+    FROM interactions i
+    CROSS JOIN query
+    WHERE i.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'interaction' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(i.subject, left(i.body, 250000), i.location)) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'call_transcript'::text AS target_type,
+      ct.id AS target_id,
+      COALESCE(i.subject, 'Call transcript') AS title,
+      concat_ws(' / ', ct.format::text, ct.language, ct.transcribed_by) AS subtitle,
+      i.occurred_at,
+      ts_rank_cd(to_tsvector('english', left(ct.raw_text, 500000)), query.tsq, 32) AS rank,
+      ts_headline(
+        'english',
+        left(ct.raw_text, 500000),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      ct.metadata AS metadata
+    FROM call_transcripts ct
+    JOIN interactions i ON i.id = ct.interaction_id
+    CROSS JOIN query
+    WHERE (filter_target_types IS NULL OR 'call_transcript' = ANY(filter_target_types))
+      AND to_tsvector('english', left(ct.raw_text, 500000)) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'document'::text AS target_type,
+      d.id AS target_id,
+      d.title,
+      concat_ws(' / ', d.document_type, d.source_path) AS subtitle,
+      COALESCE(d.occurred_at, d.authored_at, d.created_at) AS occurred_at,
+      ts_rank_cd(
+        to_tsvector('english', picardo_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', d.title, d.summary, left(d.body, 500000)),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      d.metadata AS metadata
+    FROM documents d
+    CROSS JOIN query
+    WHERE d.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'document' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'ai_note'::text AS target_type,
+      an.id AS target_id,
+      COALESCE(an.title, an.kind::text) AS title,
+      concat_ws(' / ', an.kind::text, an.model, an.model_version) AS subtitle,
+      an.generated_at AS occurred_at,
+      ts_rank_cd(to_tsvector('english', picardo_search_text(an.title, left(an.content, 250000))), query.tsq, 32) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', an.title, left(an.content, 250000)),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      an.metadata AS metadata
+    FROM ai_notes an
+    CROSS JOIN query
+    WHERE (filter_target_types IS NULL OR 'ai_note' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(an.title, left(an.content, 250000))) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'extracted_fact'::text AS target_type,
+      ef.id AS target_id,
+      ef.key AS title,
+      ef.subject_type::text AS subtitle,
+      ef.observed_at AS occurred_at,
+      ts_rank_cd(to_tsvector('english', picardo_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))), query.tsq, 32) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', ef.key, ef.value_text, left(ef.source_excerpt, 50000)),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      ef.metadata AS metadata
+    FROM extracted_facts ef
+    CROSS JOIN query
+    WHERE (filter_target_types IS NULL OR 'extracted_fact' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'organization_research_profile'::text AS target_type,
+      orp.id AS target_id,
+      COALESCE(orp.canonical_name, orp.domain::text, 'Organization research profile') AS title,
+      concat_ws(' / ', orp.category, orp.partnership_fit) AS subtitle,
+      orp.researched_at AS occurred_at,
+      ts_rank_cd(
+        to_tsvector(
+          'english',
+          picardo_search_text(
+            orp.canonical_name,
+            orp.website,
+            orp.domain::text,
+            orp.one_line_description,
+            orp.category,
+            orp.healthcare_relevance,
+            orp.partnership_fit,
+            orp.partnership_fit_rationale,
+            orp.offerings::text,
+            orp.likely_use_cases::text,
+            orp.integration_signals::text,
+            orp.compliance_signals::text,
+            orp.key_public_people::text,
+            orp.suggested_tags::text,
+            orp.review_flags::text
+          )
+        ),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', orp.canonical_name, orp.one_line_description, orp.healthcare_relevance, orp.partnership_fit, orp.partnership_fit_rationale),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      jsonb_build_object(
+        'organization_id', orp.organization_id,
+        'source_urls', orp.source_urls
+      ) AS metadata
+    FROM organization_research_profiles orp
+    CROSS JOIN query
+    WHERE (filter_target_types IS NULL OR 'organization_research_profile' = ANY(filter_target_types))
+      AND to_tsvector(
+        'english',
+        picardo_search_text(
+          orp.canonical_name,
+          orp.website,
+          orp.domain::text,
+          orp.one_line_description,
+          orp.category,
+          orp.healthcare_relevance,
+          orp.partnership_fit,
+          orp.partnership_fit_rationale,
+          orp.offerings::text,
+          orp.likely_use_cases::text,
+          orp.integration_signals::text,
+          orp.compliance_signals::text,
+          orp.key_public_people::text,
+          orp.suggested_tags::text,
+          orp.review_flags::text
+        )
+      ) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'partnership'::text AS target_type,
+      p.id AS target_id,
+      p.name AS title,
+      concat_ws(' / ', p.partnership_type, p.stage, p.priority) AS subtitle,
+      COALESCE(p.launched_at, p.signed_at, p.updated_at) AS occurred_at,
+      ts_rank_cd(
+        to_tsvector('english', picardo_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', p.name, p.strategic_rationale, p.commercial_model, p.status_notes),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      p.metadata AS metadata
+    FROM partnerships p
+    CROSS JOIN query
+    WHERE p.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'partnership' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'partnership_service'::text AS target_type,
+      ps.id AS target_id,
+      ps.name AS title,
+      concat_ws(' / ', ps.service_type, ps.status) AS subtitle,
+      ps.updated_at AS occurred_at,
+      ts_rank_cd(
+        to_tsvector('english', picardo_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      ps.metadata AS metadata
+    FROM partnership_services ps
+    CROSS JOIN query
+    WHERE ps.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'partnership_service' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'partnership_integration'::text AS target_type,
+      pi.id AS target_id,
+      pi.integration_type AS title,
+      concat_ws(' / ', pi.status, pi.sync_direction) AS subtitle,
+      COALESCE(pi.last_sync_at, pi.updated_at) AS occurred_at,
+      ts_rank_cd(
+        to_tsvector('english', picardo_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      pi.metadata AS metadata
+    FROM partnership_integrations pi
+    CROSS JOIN query
+    WHERE pi.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'partnership_integration' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)) @@ query.tsq
+  )
+  SELECT
+    ranked.target_type,
+    ranked.target_id,
+    ranked.title,
+    ranked.subtitle,
+    ranked.occurred_at,
+    ranked.rank,
+    ranked.headline,
+    ranked.metadata
+  FROM ranked
+  ORDER BY ranked.rank DESC, ranked.occurred_at DESC NULLS LAST
+  LIMIT LEAST(GREATEST(COALESCE(match_count, 20), 1), 100);
 $$;
 
 
@@ -1224,6 +1627,13 @@ CREATE INDEX idx_ai_notes_interaction ON public.ai_notes USING btree (interactio
 
 
 --
+-- Name: idx_ai_notes_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_ai_notes_search_fts ON public.ai_notes USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[title, "left"(content, 250000)])));
+
+
+--
 -- Name: idx_ai_notes_subject; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1235,6 +1645,13 @@ CREATE INDEX idx_ai_notes_subject ON public.ai_notes USING btree (subject_type, 
 --
 
 CREATE INDEX idx_call_transcripts_interaction ON public.call_transcripts USING btree (interaction_id);
+
+
+--
+-- Name: idx_call_transcripts_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_call_transcripts_search_fts ON public.call_transcripts USING gin (to_tsvector('english'::regconfig, "left"(raw_text, 500000)));
 
 
 --
@@ -1329,10 +1746,24 @@ CREATE INDEX idx_documents_occurred_at ON public.documents USING btree (occurred
 
 
 --
+-- Name: idx_documents_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_documents_search_fts ON public.documents USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[title, document_type, summary, "left"(body, 500000), source_path]))) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_documents_source_path; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_documents_source_path ON public.documents USING btree (source_path);
+
+
+--
+-- Name: idx_documents_title_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_documents_title_trgm ON public.documents USING gin (lower(title) public.gin_trgm_ops) WHERE (archived_at IS NULL);
 
 
 --
@@ -1354,6 +1785,13 @@ CREATE INDEX idx_extracted_facts_document ON public.extracted_facts USING btree 
 --
 
 CREATE INDEX idx_extracted_facts_observed ON public.extracted_facts USING btree (observed_at DESC);
+
+
+--
+-- Name: idx_extracted_facts_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_extracted_facts_search_fts ON public.extracted_facts USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[key, value_text, "left"(source_excerpt, 50000)])));
 
 
 --
@@ -1385,10 +1823,31 @@ CREATE INDEX idx_interactions_occurred_at ON public.interactions USING btree (oc
 
 
 --
+-- Name: idx_interactions_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_interactions_search_fts ON public.interactions USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[subject, "left"(body, 250000), location]))) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_interactions_subject_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_interactions_subject_trgm ON public.interactions USING gin (lower(subject) public.gin_trgm_ops) WHERE ((archived_at IS NULL) AND (subject IS NOT NULL));
+
+
+--
 -- Name: idx_interactions_type; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_interactions_type ON public.interactions USING btree (type);
+
+
+--
+-- Name: idx_org_research_profiles_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_org_research_profiles_search_fts ON public.organization_research_profiles USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[canonical_name, website, (domain)::text, one_line_description, category, healthcare_relevance, partnership_fit, partnership_fit_rationale, (offerings)::text, (likely_use_cases)::text, (integration_signals)::text, (compliance_signals)::text, (key_public_people)::text, (suggested_tags)::text, (review_flags)::text])));
 
 
 --
@@ -1434,6 +1893,20 @@ CREATE INDEX idx_organizations_name ON public.organizations USING btree (lower(n
 
 
 --
+-- Name: idx_organizations_name_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_organizations_name_trgm ON public.organizations USING gin (lower(name) public.gin_trgm_ops) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_organizations_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_organizations_search_fts ON public.organizations USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, legal_name, (domain)::text, website, description, industry, hq_city, hq_region, hq_country, notes]))) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_partnership_documents_document; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1473,6 +1946,13 @@ CREATE INDEX idx_partnership_integrations_metadata ON public.partnership_integra
 --
 
 CREATE INDEX idx_partnership_integrations_partnership ON public.partnership_integrations USING btree (partnership_id);
+
+
+--
+-- Name: idx_partnership_integrations_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_partnership_integrations_search_fts ON public.partnership_integrations USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[integration_type, status, sync_direction, (data_formats)::text, notes]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -1567,6 +2047,13 @@ CREATE INDEX idx_partnership_services_partnership ON public.partnership_services
 
 
 --
+-- Name: idx_partnership_services_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_partnership_services_search_fts ON public.partnership_services USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, service_type, status, clinical_use, (data_modalities)::text]))) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_partnership_services_status; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1609,6 +2096,13 @@ CREATE INDEX idx_partnerships_priority ON public.partnerships USING btree (prior
 
 
 --
+-- Name: idx_partnerships_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_partnerships_search_fts ON public.partnerships USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, partnership_type, stage, priority, strategic_rationale, commercial_model, status_notes]))) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_partnerships_source; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1644,10 +2138,24 @@ CREATE INDEX idx_people_full_name ON public.people USING btree (lower(full_name)
 
 
 --
+-- Name: idx_people_full_name_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_people_full_name_trgm ON public.people USING gin (lower(full_name) public.gin_trgm_ops) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_people_primary_email; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_people_primary_email ON public.people USING btree (primary_email);
+
+
+--
+-- Name: idx_people_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_people_search_fts ON public.people USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -1676,6 +2184,13 @@ CREATE INDEX idx_rel_edges_source ON public.relationship_edges USING btree (sour
 --
 
 CREATE INDEX idx_rel_edges_target ON public.relationship_edges USING btree (target_entity_type, target_entity_id);
+
+
+--
+-- Name: idx_semantic_embeddings_content_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_semantic_embeddings_content_fts ON public.semantic_embeddings USING gin (to_tsvector('english'::regconfig, content)) WHERE (archived_at IS NULL);
 
 
 --

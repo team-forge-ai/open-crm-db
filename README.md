@@ -123,11 +123,29 @@ Top-level entities:
 - `tags` / `taggings`, `relationship_edges`
 - `sources`, `external_identities`
 
-## Semantic search
+## Search
 
-The database supports semantic search through Postgres `pgvector`. Embeddings
-live in the chunk-level `semantic_embeddings` table and are searched with the
-SQL helper function:
+The database supports two lightweight search paths:
+
+- lexical search through Postgres full-text search and `pg_trgm`
+- semantic search through Postgres `pgvector`
+
+For keyword search across CRM records:
+
+```sql
+select *
+from search_crm_full_text('genomics lab ordering', 20);
+```
+
+For keyword search over embedded content chunks, useful for hybrid retrieval:
+
+```sql
+select *
+from match_full_text_embeddings('genomics lab ordering', 10, array['document', 'ai_note']);
+```
+
+Embeddings live in the chunk-level `semantic_embeddings` table and are searched
+with the SQL helper function:
 
 ```sql
 select *
@@ -147,6 +165,11 @@ curl -X POST http://localhost:11434/api/embed \
 Use the same embedding model for indexing and querying. If you switch to a
 model with a different vector length, add a SQL migration for the new dimension
 instead of mixing dimensions in the same index.
+
+Direct source-record full-text indexes intentionally cap very long text inputs
+to stay under Postgres' per-row `tsvector` limit. Full long-form coverage should
+come from chunking content into `semantic_embeddings`, then using semantic
+search, chunk-level full-text search, or both.
 
 ## Local AI skill
 
