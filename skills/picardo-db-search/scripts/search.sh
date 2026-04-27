@@ -9,11 +9,11 @@ Usage:
 Options:
   --limit N                  Results per search path, 1-100. Default: 10.
   --target-types a,b,c       Comma-separated target_type filter.
-  --ollama-url URL           Ollama base URL. Default: http://localhost:11434.
-  --model MODEL              Ollama embedding model. Default: embeddinggemma.
+  --mlx-model MODEL           MLX embedding model. Default: mlx-community/embeddinggemma-300m-4bit.
+  --query-prefix TEXT         Prefix added to semantic queries. Default: task: search result | query: .
   --min-similarity N         Minimum semantic similarity. Default: 0.35.
   --snippet-chars N          Max excerpt characters. Default: 500.
-  --no-semantic              Skip Ollama embedding and vector search.
+  --no-semantic              Skip embedding generation and vector search.
   --no-full-text             Skip entity/chunk full-text search.
   -h, --help                 Show this help.
 
@@ -43,8 +43,8 @@ fi
 QUERY=""
 LIMIT="10"
 TARGET_TYPES=""
-OLLAMA_URL="${OLLAMA_URL:-http://localhost:11434}"
-MODEL="${OLLAMA_EMBEDDING_MODEL:-embeddinggemma}"
+MLX_MODEL="${MLX_EMBEDDING_MODEL:-mlx-community/embeddinggemma-300m-4bit}"
+QUERY_PREFIX="${PICARDO_SEARCH_QUERY_PREFIX:-task: search result | query: }"
 MIN_SIMILARITY="0.35"
 SNIPPET_CHARS="500"
 RUN_SEMANTIC="1"
@@ -64,12 +64,12 @@ while [[ $# -gt 0 ]]; do
       TARGET_TYPES="${2:-}"
       shift 2
       ;;
-    --ollama-url)
-      OLLAMA_URL="${2:-}"
+    --mlx-model)
+      MLX_MODEL="${2:-}"
       shift 2
       ;;
-    --model)
-      MODEL="${2:-}"
+    --query-prefix)
+      QUERY_PREFIX="${2-}"
       shift 2
       ;;
     --min-similarity)
@@ -199,38 +199,30 @@ SQL
 fi
 
 if [[ "${RUN_SEMANTIC}" == "1" ]]; then
-  if ! command -v node >/dev/null 2>&1; then
-    echo "node is required for semantic search so the query can be embedded with Ollama." >&2
+  if ! command -v uv >/dev/null 2>&1; then
+    echo "uv is required for MLX semantic search." >&2
     exit 1
   fi
 
   QUERY_EMBEDDING="$(
-    node - "${QUERY}" "${OLLAMA_URL}" "${MODEL}" <<'NODE'
-const [query, ollamaUrl, model] = process.argv.slice(2);
-const endpoint = `${ollamaUrl.replace(/\/+$/, "")}/api/embed`;
+    HF_HUB_DISABLE_PROGRESS_BARS=1 uv run --quiet --with mlx-embeddings --with mlx python - "${QUERY}" "${MLX_MODEL}" "${QUERY_PREFIX}" <<'PY'
+from mlx_embeddings import load
+import mlx.core as mx
+import sys
 
-const response = await fetch(endpoint, {
-  method: "POST",
-  headers: { "content-type": "application/json" },
-  body: JSON.stringify({ model, input: query }),
-});
+query, model_name, query_prefix = sys.argv[1:4]
+text = query if not query_prefix or query.startswith("task:") else f"{query_prefix}{query}"
 
-if (!response.ok) {
-  const body = await response.text();
-  throw new Error(`Ollama embed failed: ${response.status} ${body}`);
-}
+model, tokenizer = load(model_name)
+encoded = tokenizer([text], padding=True, truncation=True, return_tensors="mlx")
+embedding = model(encoded["input_ids"], encoded["attention_mask"]).text_embeds[0]
+mx.eval(embedding)
 
-const payload = await response.json();
-const vector = Array.isArray(payload.embeddings?.[0])
-  ? payload.embeddings[0]
-  : payload.embedding;
+if embedding.shape[0] != 768:
+    raise SystemExit(f"Expected a 768-dimensional embedding, got {embedding.shape[0]}")
 
-if (!Array.isArray(vector) || vector.length !== 768) {
-  throw new Error(`Expected a 768-dimensional embedding, got ${Array.isArray(vector) ? vector.length : "none"}`);
-}
-
-console.log(`[${vector.join(",")}]`);
-NODE
+print("[" + ",".join(str(float(value)) for value in embedding.tolist()) + "]")
+PY
   )"
 
   "${PSQL_HELPER}" \

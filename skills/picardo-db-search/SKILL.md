@@ -1,6 +1,6 @@
 ---
 name: picardo-db-search
-description: Search Picardo's internal Postgres CRM using full-text search, pgvector semantic embeddings, or hybrid retrieval. Use when Codex needs to find organizations, people, interactions, documents, transcripts, notes, facts, partnerships, services, or integrations in the Picardo database with Ollama embeddinggemma and Postgres search functions.
+description: Search Picardo's internal Postgres CRM using full-text search, pgvector semantic embeddings, or hybrid retrieval. Use when Codex needs to find organizations, people, interactions, documents, transcripts, notes, facts, partnerships, services, or integrations in the Picardo database with local EmbeddingGemma, MLX, and Postgres search functions.
 ---
 
 # Picardo DB Search
@@ -35,11 +35,12 @@ local-only `credentials.env` files in this repo, `~/.codex/skills`, then
 
 ## Fast Path
 
-Start Ollama when semantic search is needed:
+Semantic search uses MLX EmbeddingGemma through `uv` by default, so no local
+server is required. The first run downloads Python wheels and the MLX model;
+later runs reuse the local caches.
 
 ```bash
-ollama serve
-ollama pull embeddinggemma
+uv run --with mlx-embeddings --with mlx python -c "from mlx_embeddings import load; load('mlx-community/embeddinggemma-300m-4bit')"
 ```
 
 Run hybrid search:
@@ -53,14 +54,16 @@ The script prints JSONL from the available search paths. By default it runs:
 
 1. entity-level full-text search over source CRM tables
 2. chunk-level full-text search over `semantic_embeddings.content`
-3. semantic search after embedding the query locally with Ollama
+3. semantic search after embedding the query locally with MLX using the
+   retrieval query prefix `task: search result | query: `
 
 Useful options:
 
 ```bash
 scripts/search.sh "query" --no-semantic
 scripts/search.sh "query" --no-full-text
-scripts/search.sh "query" --model embeddinggemma --ollama-url http://localhost:11434
+scripts/search.sh "query" --mlx-model mlx-community/embeddinggemma-300m-4bit
+scripts/search.sh "query" --query-prefix ""
 scripts/search.sh "query" --min-similarity 0.3
 scripts/search.sh "query" --snippet-chars 300
 ```
@@ -91,8 +94,8 @@ from match_full_text_embeddings(
 );
 ```
 
-Semantic search requires a 768-dimensional query vector from the same model
-used for backfill, currently local Ollama `embeddinggemma`:
+Semantic search requires a 768-dimensional query vector from an EmbeddingGemma
+variant compatible with the backfilled vectors:
 
 ```sql
 select *

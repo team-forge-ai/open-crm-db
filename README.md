@@ -39,7 +39,7 @@ pnpm picardo-db migrate down -n 2         # revert the last two
 pnpm picardo-db migrate status            # applied vs pending
 pnpm picardo-db migrate create "add foo"  # scaffold a new SQL migration
 pnpm picardo-db embeddings backfill        # dry-run local semantic embedding backfill
-pnpm picardo-db embeddings backfill --apply # write local Ollama embeddings
+pnpm picardo-db embeddings backfill --apply # write local MLX embeddings
 pnpm enrich:crm --limit 5                 # dry-run public CRM enrichment
 pnpm enrich:crm --apply --limit 5         # write enrichment facts/notes
 ```
@@ -155,20 +155,17 @@ from match_semantic_embeddings('[...]'::vector, 10, array['document', 'ai_note']
 ```
 
 The current schema fixes vectors at 768 dimensions. For local development on
-Apple Silicon, use Ollama with `embeddinggemma`:
+Apple Silicon, use MLX EmbeddingGemma:
 
 ```sh
-ollama pull embeddinggemma
-curl -X POST http://localhost:11434/api/embed \
-  -H "Content-Type: application/json" \
-  -d '{"model":"embeddinggemma","input":"Picardo partnership notes"}'
+uv run --with mlx-embeddings --with mlx python -c "from mlx_embeddings import load; load('mlx-community/embeddinggemma-300m-4bit')"
 ```
 
 Use the same embedding model for indexing and querying. If you switch to a
 model with a different vector length, add a SQL migration for the new dimension
 instead of mixing dimensions in the same index.
 
-Backfill active CRM records into chunk-level embeddings with local Ollama:
+Backfill active CRM records into chunk-level embeddings with local MLX:
 
 ```sh
 pnpm picardo-db embeddings backfill
@@ -179,7 +176,7 @@ pnpm picardo-db embeddings backfill --apply --target-type document,call_transcri
 The command is dry-run by default, skips unchanged chunks by SHA-256 hash, and
 archives stale extra chunks when source content gets shorter. It loads
 `DATABASE_URL` from `.env` or the local skill credentials file, and sends source
-text only to the configured local Ollama URL.
+text only through the local MLX embedding runtime.
 
 Direct source-record full-text indexes intentionally cap very long text inputs
 to stay under Postgres' per-row `tsvector` limit. Full long-form coverage should
@@ -195,7 +192,7 @@ This repo includes reusable local skills under [`skills/`](skills/):
   sync transcripts, conversations, documents, notes, and extracted facts.
 - [`skills/picardo-db-search`](skills/picardo-db-search) contains a read-only
   hybrid search workflow that combines Postgres full-text search with local
-  Ollama `embeddinggemma` semantic search.
+  EmbeddingGemma semantic search through MLX.
 
 Live database credentials are not committed. To enable the helper, copy
 `skills/picardo-internal-db/references/credentials.env.example` to

@@ -1,4 +1,4 @@
 interface:
   display_name: "Picardo DB Search"
-  short_description: "Hybrid CRM search with Postgres and Ollama"
+  short_description: "Hybrid CRM search with Postgres and MLX"
   default_prompt: "Use $picardo-db-search to find relevant CRM records for this query."

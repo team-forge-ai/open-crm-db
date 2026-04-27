@@ -1,18 +1,41 @@
 import crypto from 'node:crypto'
+import { spawn } from 'node:child_process'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import dotenv from 'dotenv'
 import pg from 'pg'
 import { findRepoRoot, loadConfig } from '../config.js'
 
-const DEFAULT_OLLAMA_URL = 'http://localhost:11434'
-const DEFAULT_PROVIDER = 'ollama'
-const DEFAULT_MODEL = 'embeddinggemma'
-const DEFAULT_MODEL_VERSION = 'latest'
+const DEFAULT_PROVIDER = 'mlx'
+const DEFAULT_MODEL = 'mlx-community/embeddinggemma-300m-4bit'
+const DEFAULT_MODEL_VERSION = '4bit'
 const DEFAULT_CHUNK_SIZE = 6_000
 const DEFAULT_CHUNK_OVERLAP = 500
 const DEFAULT_EMBED_BATCH_SIZE = 8
 const EMBEDDING_DIMENSION = 768
+const MLX_EMBED_SCRIPT = `
+import json
+import sys
+from mlx_embeddings import load
+import mlx.core as mx
+
+model_name = sys.argv[1]
+batch_size = int(sys.argv[2])
+texts = json.load(sys.stdin)
+
+model, tokenizer = load(model_name)
+embeddings = []
+
+for start in range(0, len(texts), batch_size):
+    batch = texts[start:start + batch_size]
+    encoded = tokenizer(batch, padding=True, truncation=True, return_tensors="mlx")
+    output = model(encoded["input_ids"], encoded["attention_mask"])
+    batch_embeddings = output.text_embeds
+    mx.eval(batch_embeddings)
+    embeddings.extend(batch_embeddings.tolist())
+
+print(json.dumps(embeddings))
+`
 
 const TARGET_TYPES = [
   'organization',
@@ -40,7 +63,6 @@ export interface BackfillEmbeddingsOptions {
   limit?: number
   model?: string
   modelVersion?: string
-  ollamaUrl?: string
   provider?: string
   targetType?: string
   verbose?: boolean
@@ -55,7 +77,6 @@ interface NormalizedOptions {
   limit: number | null
   model: string
   modelVersion: string
-  ollamaUrl: string
   provider: string
   targetTypes: TargetType[]
   verbose: boolean
@@ -112,7 +133,7 @@ export async function backfillEmbeddings(
   try {
     await assertEmbeddingSchema(pool)
     if (normalized.apply) {
-      await assertOllamaModel(normalized)
+      await assertMlxRuntime()
     }
 
     const candidates = await fetchSourceCandidates(pool, normalized)
@@ -255,7 +276,6 @@ function normalizeOptions(options: BackfillEmbeddingsOptions): NormalizedOptions
       options.limit === undefined ? null : positiveInteger(options.limit, 0),
     model: nonBlank(options.model, DEFAULT_MODEL),
     modelVersion: nonBlank(options.modelVersion, DEFAULT_MODEL_VERSION),
-    ollamaUrl: nonBlank(options.ollamaUrl, DEFAULT_OLLAMA_URL).replace(/\/+$/, ''),
     provider: nonBlank(options.provider, DEFAULT_PROVIDER),
     targetTypes: parseTargetTypes(options.targetType),
     verbose: Boolean(options.verbose),
@@ -321,23 +341,8 @@ async function assertEmbeddingSchema(pool: pg.Pool): Promise<void> {
   }
 }
 
-async function assertOllamaModel(options: NormalizedOptions): Promise<void> {
-  const res = await fetch(`${options.ollamaUrl}/api/tags`)
-  if (!res.ok) {
-    throw new Error(
-      `Ollama is not reachable at ${options.ollamaUrl}: ${res.status} ${res.statusText}.`,
-    )
-  }
-
-  const body = (await res.json()) as { models?: Array<{ name?: string }> }
-  const modelNames = new Set((body.models ?? []).map((model) => model.name))
-  const hasModel =
-    modelNames.has(options.model) || modelNames.has(`${options.model}:latest`)
-  if (!hasModel) {
-    throw new Error(
-      `Ollama model ${options.model} is not installed. Run \`ollama pull ${options.model}\` first.`,
-    )
-  }
+async function assertMlxRuntime(): Promise<void> {
+  await runProcess('uv', ['--version'], '')
 }
 
 async function fetchSourceCandidates(
@@ -693,43 +698,91 @@ async function embedChunks(
   options: NormalizedOptions,
   chunks: ContentChunk[],
 ): Promise<number[][]> {
-  const embeddings: number[][] = []
-  for (let i = 0; i < chunks.length; i += options.batchSize) {
-    const batch = chunks.slice(i, i + options.batchSize)
-    const inputs = batch.map(
-      (chunk) => `title: none | text: ${chunk.content}`,
-    )
-    const res = await fetch(`${options.ollamaUrl}/api/embed`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model: options.model,
-        input: inputs,
-      }),
-    })
+  const inputs = chunks.map((chunk) => `title: none | text: ${chunk.content}`)
+  const stdout = await runProcess(
+    'uv',
+    [
+      'run',
+      '--quiet',
+      '--with',
+      'mlx-embeddings',
+      '--with',
+      'mlx',
+      'python',
+      '-c',
+      MLX_EMBED_SCRIPT,
+      options.model,
+      String(options.batchSize),
+    ],
+    JSON.stringify(inputs),
+    {
+      HF_HUB_DISABLE_PROGRESS_BARS: '1',
+    },
+  )
 
-    if (!res.ok) {
+  const parsed = JSON.parse(stdout) as unknown
+  if (!Array.isArray(parsed) || parsed.length !== chunks.length) {
+    throw new Error('MLX embedding command returned an unexpected response.')
+  }
+
+  return parsed.map((embedding, index) => {
+    if (!isNumberArray(embedding)) {
+      throw new Error(`MLX embedding ${index} is not a numeric vector.`)
+    }
+    if (embedding.length !== EMBEDDING_DIMENSION) {
       throw new Error(
-        `Ollama embed failed: ${res.status} ${res.statusText}: ${await res.text()}`,
+        `Expected ${EMBEDDING_DIMENSION}-dimension embeddings from ${options.model}, received ${embedding.length}.`,
       )
     }
+    return embedding
+  })
+}
 
-    const body = (await res.json()) as { embeddings?: number[][] }
-    const batchEmbeddings = body.embeddings
-    if (!batchEmbeddings || batchEmbeddings.length !== batch.length) {
-      throw new Error('Ollama returned an unexpected embeddings response.')
-    }
+function isNumberArray(value: unknown): value is number[] {
+  return (
+    Array.isArray(value) &&
+    value.every((item) => typeof item === 'number' && Number.isFinite(item))
+  )
+}
 
-    for (const embedding of batchEmbeddings) {
-      if (embedding.length !== EMBEDDING_DIMENSION) {
-        throw new Error(
-          `Expected ${EMBEDDING_DIMENSION}-dimension embeddings from ${options.model}, received ${embedding.length}.`,
+async function runProcess(
+  command: string,
+  args: string[],
+  stdin: string,
+  extraEnv: NodeJS.ProcessEnv = {},
+): Promise<string> {
+  return new Promise<string>((resolve, reject) => {
+    const child = spawn(command, args, {
+      env: { ...process.env, ...extraEnv },
+      stdio: ['pipe', 'pipe', 'pipe'],
+    })
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolve(stdout.trim())
+      } else {
+        reject(
+          new Error(
+            `${command} exited with code ${code ?? 'unknown'}: ${stderr.trim()}`,
+          ),
         )
       }
-      embeddings.push(embedding)
-    }
-  }
-  return embeddings
+    })
+
+    child.stdin.write(stdin)
+    child.stdin.end()
+  })
 }
 
 async function writeChunks(

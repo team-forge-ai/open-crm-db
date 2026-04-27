@@ -74,7 +74,7 @@ export function buildProgram(): Command {
   embeddings
     .command('backfill')
     .description(
-      'Backfill semantic_embeddings from CRM source records using local Ollama.',
+      'Backfill semantic_embeddings from CRM source records using local MLX.',
     )
     .option(
       '--apply',
@@ -105,14 +105,13 @@ export function buildProgram(): Command {
       'Maximum source records to inspect.',
       (v) => Number.parseInt(v, 10),
     )
-    .option('--model <model>', 'Ollama embedding model.', 'embeddinggemma')
-    .option('--model-version <version>', 'Model version label.', 'latest')
     .option(
-      '--ollama-url <url>',
-      'Base URL for local Ollama.',
-      'http://localhost:11434',
+      '--model <model>',
+      'MLX embedding model.',
+      'mlx-community/embeddinggemma-300m-4bit',
     )
-    .option('--provider <provider>', 'Embedding provider label.', 'ollama')
+    .option('--model-version <version>', 'Model version label.', '4bit')
+    .option('--provider <provider>', 'Embedding provider label.', 'mlx')
     .option(
       '--target-type <types>',
       'Comma-separated target types to backfill. Defaults to all supported types.',

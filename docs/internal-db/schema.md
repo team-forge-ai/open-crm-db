@@ -244,8 +244,8 @@ organization research profile.
 Only one active embedding is allowed per `(target, provider, model, version,
 chunk_index)`. Re-embedding changed content should update the active row or
 archive it via `archived_at` before inserting a replacement. The default local
-provider/model is Ollama `embeddinggemma`, which returns 768-dimension vectors;
-using another dimension requires a follow-up migration.
+provider/model is MLX `mlx-community/embeddinggemma-300m-4bit`, which returns
+768-dimension vectors; using another dimension requires a follow-up migration.
 
 `match_semantic_embeddings(query_embedding, match_count, filter_target_types)`
 performs cosine search over non-archived chunks and caps result count at 100.
