@@ -1,0 +1,4 @@
+interface:
+  display_name: "Picardo Internal DB"
+  short_description: "Remote CRM database operations"
+  default_prompt: "Use $picardo-internal-db to inspect the schema and safely sync CRM interactions, transcripts, and AI notes."

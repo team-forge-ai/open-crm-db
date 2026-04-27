@@ -56,6 +56,7 @@ src/                TypeScript source for the CLI
 migrations/         SQL migrations applied in timestamp order
 templates/          Migration template (`-- Up Migration` / `-- Down Migration`)
 docs/internal-db/   plan / status / schema / ai-ingestion / final-report
+skills/             local AI skill for safe CRM database operations
 ```
 
 ## Migrations
@@ -89,6 +90,18 @@ Top-level entities:
 - `call_transcripts`, `ai_notes`, `extracted_facts`
 - `tags` / `taggings`, `relationship_edges`
 - `sources`, `external_identities`
+
+## Local AI skill
+
+This repo includes a reusable local skill at
+[`skills/picardo-internal-db`](skills/picardo-internal-db). It contains schema
+references, ingestion workflows, and a `psql` helper for agents that need to
+sync transcripts, conversations, documents, notes, and extracted facts.
+
+Live database credentials are not committed. To enable the helper, copy
+`skills/picardo-internal-db/references/credentials.env.example` to
+`skills/picardo-internal-db/references/credentials.env`, fill in the Neon
+connection string, and keep that file local.
 
 ## Development
 
