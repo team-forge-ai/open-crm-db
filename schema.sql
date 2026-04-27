@@ -36,6 +36,20 @@ COMMENT ON EXTENSION pgcrypto IS 'cryptographic functions';
 
 
 --
+-- Name: vector; Type: EXTENSION; Schema: -; Owner: -
+--
+
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;
+
+
+--
+-- Name: EXTENSION vector; Type: COMMENT; Schema: -; Owner: -
+--
+
+COMMENT ON EXTENSION vector IS 'vector data type and ivfflat and hnsw access methods';
+
+
+--
 -- Name: ai_note_kind; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -132,6 +146,35 @@ CREATE TYPE public.transcript_format AS ENUM (
     'speaker_turns_jsonl',
     'other'
 );
+
+
+--
+-- Name: match_semantic_embeddings(public.vector, integer, text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.match_semantic_embeddings(query_embedding public.vector, match_count integer DEFAULT 10, filter_target_types text[] DEFAULT NULL::text[]) RETURNS TABLE(id uuid, target_type text, target_id uuid, chunk_index integer, content text, embedding_provider text, embedding_model text, embedding_model_version text, metadata jsonb, similarity double precision)
+    LANGUAGE sql STABLE
+    AS $$
+  SELECT
+    se.id,
+    se.target_type,
+    se.target_id,
+    se.chunk_index,
+    se.content,
+    se.embedding_provider,
+    se.embedding_model,
+    se.embedding_model_version,
+    se.metadata,
+    1 - (se.embedding <=> query_embedding) AS similarity
+  FROM semantic_embeddings se
+  WHERE se.archived_at IS NULL
+    AND (
+      filter_target_types IS NULL
+      OR se.target_type = ANY(filter_target_types)
+    )
+  ORDER BY se.embedding <=> query_embedding
+  LIMIT LEAST(GREATEST(COALESCE(match_count, 10), 1), 100);
+$$;
 
 
 --
@@ -682,6 +725,35 @@ CREATE TABLE public.relationship_edges (
 
 
 --
+-- Name: semantic_embeddings; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.semantic_embeddings (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    target_type text NOT NULL,
+    target_id uuid NOT NULL,
+    chunk_index integer DEFAULT 0 NOT NULL,
+    content text NOT NULL,
+    content_sha256 text NOT NULL,
+    embedding_provider text DEFAULT 'ollama'::text NOT NULL,
+    embedding_model text DEFAULT 'embeddinggemma'::text NOT NULL,
+    embedding_model_version text DEFAULT 'latest'::text NOT NULL,
+    embedding_dimension integer DEFAULT 768 NOT NULL,
+    embedding public.vector(768) NOT NULL,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    embedded_at timestamp with time zone DEFAULT now() NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT semantic_embeddings_chunk_index_check CHECK ((chunk_index >= 0)),
+    CONSTRAINT semantic_embeddings_content_check CHECK ((length(TRIM(BOTH FROM content)) > 0)),
+    CONSTRAINT semantic_embeddings_content_sha256_check CHECK ((content_sha256 ~ '^[a-f0-9]{64}$'::text)),
+    CONSTRAINT semantic_embeddings_embedding_dimension_check CHECK ((embedding_dimension = 768)),
+    CONSTRAINT semantic_embeddings_target_type_check CHECK ((target_type = ANY (ARRAY['organization'::text, 'organization_research_profile'::text, 'person'::text, 'interaction'::text, 'document'::text, 'partnership'::text, 'partnership_service'::text, 'partnership_integration'::text, 'call_transcript'::text, 'ai_note'::text, 'extracted_fact'::text])))
+);
+
+
+--
 -- Name: sources; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1051,6 +1123,14 @@ ALTER TABLE ONLY public.relationship_edges
 
 ALTER TABLE ONLY public.relationship_edges
     ADD CONSTRAINT relationship_edges_source_entity_type_source_entity_id_targ_key UNIQUE (source_entity_type, source_entity_id, target_entity_type, target_entity_id, edge_type);
+
+
+--
+-- Name: semantic_embeddings semantic_embeddings_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.semantic_embeddings
+    ADD CONSTRAINT semantic_embeddings_pkey PRIMARY KEY (id);
 
 
 --
@@ -1599,6 +1679,27 @@ CREATE INDEX idx_rel_edges_target ON public.relationship_edges USING btree (targ
 
 
 --
+-- Name: idx_semantic_embeddings_embedding_hnsw; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_semantic_embeddings_embedding_hnsw ON public.semantic_embeddings USING hnsw (embedding public.vector_cosine_ops) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_semantic_embeddings_model; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_semantic_embeddings_model ON public.semantic_embeddings USING btree (embedding_provider, embedding_model, embedding_model_version) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_semantic_embeddings_target; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_semantic_embeddings_target ON public.semantic_embeddings USING btree (target_type, target_id) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_taggings_target; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -1645,6 +1746,13 @@ CREATE UNIQUE INDEX uq_partnership_services_active_name ON public.partnership_se
 --
 
 CREATE UNIQUE INDEX uq_partnerships_active_org_name ON public.partnerships USING btree (organization_id, lower(name)) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: uq_semantic_embeddings_active_chunk; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_semantic_embeddings_active_chunk ON public.semantic_embeddings USING btree (target_type, target_id, embedding_provider, embedding_model, embedding_model_version, chunk_index) WHERE (archived_at IS NULL);
 
 
 --
@@ -1806,6 +1914,13 @@ CREATE TRIGGER trg_person_phones_updated_at BEFORE UPDATE ON public.person_phone
 --
 
 CREATE TRIGGER trg_relationship_edges_updated_at BEFORE UPDATE ON public.relationship_edges FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: semantic_embeddings trg_semantic_embeddings_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_semantic_embeddings_updated_at BEFORE UPDATE ON public.semantic_embeddings FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
 
 
 --

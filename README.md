@@ -119,8 +119,34 @@ Top-level entities:
 - `partnerships`, `partnership_people`, `partnership_interactions`, `partnership_documents`
 - `partnership_services`, `partnership_integrations`
 - `call_transcripts`, `ai_notes`, `extracted_facts`
+- `semantic_embeddings`
 - `tags` / `taggings`, `relationship_edges`
 - `sources`, `external_identities`
+
+## Semantic search
+
+The database supports semantic search through Postgres `pgvector`. Embeddings
+live in the chunk-level `semantic_embeddings` table and are searched with the
+SQL helper function:
+
+```sql
+select *
+from match_semantic_embeddings('[...]'::vector, 10, array['document', 'ai_note']);
+```
+
+The current schema fixes vectors at 768 dimensions. For local development on
+Apple Silicon, use Ollama with `embeddinggemma`:
+
+```sh
+ollama pull embeddinggemma
+curl -X POST http://localhost:11434/api/embed \
+  -H "Content-Type: application/json" \
+  -d '{"model":"embeddinggemma","input":"Picardo partnership notes"}'
+```
+
+Use the same embedding model for indexing and querying. If you switch to a
+model with a different vector length, add a SQL migration for the new dimension
+instead of mixing dimensions in the same index.
 
 ## Local AI skill
 
