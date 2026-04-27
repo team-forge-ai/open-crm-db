@@ -6,14 +6,17 @@ headless CRM safely. It pairs with `schema.md`.
 ## Purpose
 
 The Picardo Internal DB is the single source of truth for **every interaction
-the company has with another company or person**: calls, meetings, emails,
-messages, and the notes/summaries derived from them. An AI agent is expected
-to keep this database fresh by ingesting from upstream sources (Gmail, Google
-Calendar, Zoom, Google Meet, manual notes, etc.) and writing structured rows.
+the company has with another company or person** and for durable company
+knowledge artifacts: calls, meetings, emails, messages, internal notes, memos,
+research notes, meeting-note documents, strategy documents, and the
+notes/summaries derived from them. An AI agent is expected to keep this
+database fresh by ingesting from upstream sources (Gmail, Google Calendar,
+Zoom, Google Meet, manual notes, repo docs, etc.) and writing structured rows.
 
 The schema is normalized: organizations, people, affiliations, interactions,
-participants, transcripts, AI notes, extracted facts, tags, and relationship
-edges. Free-form structured data goes in each table's `metadata jsonb`.
+participants, transcripts, documents, document links, AI notes, extracted
+facts, tags, and relationship edges. Free-form structured data goes in each
+table's `metadata jsonb`.
 
 ## Connection
 
@@ -76,9 +79,10 @@ SELECT entity_id FROM ext;
 -- if no rows: insert into people, then insert into external_identities
 ```
 
-For `interactions` and `call_transcripts`, the unique index
-`(source_id, source_external_id)` is the agent's idempotency key. Re-ingesting
-the same Gmail message or Zoom transcript should produce zero new rows.
+For `interactions`, `call_transcripts`, and `documents`, the unique index
+`(source_id, source_external_id)` is the agent's idempotency key when an
+external ID exists. Re-ingesting the same Gmail message, Zoom transcript, or
+repo document should produce zero duplicate rows.
 
 ## Recording an interaction
 
@@ -98,6 +102,32 @@ the same Gmail message or Zoom transcript should produce zero new rows.
    "based in Berlin"), insert one row per fact into `extracted_facts` with
    `confidence` and `interaction_id`.
 
+## Recording a document
+
+Use `documents` for durable knowledge artifacts that are not naturally an
+interaction: internal memos, research notes, strategy docs, repo markdown,
+meeting-note documents, contract summaries, external briefs, and similar
+artifacts.
+
+1. Resolve / create the source in `sources`.
+2. Insert or update `documents` with `title`, `document_type`, `body`,
+   `summary`, `authored_at`, `occurred_at`, `source_id`,
+   `source_external_id`, and `source_path` when available. Treat
+   `(source_id, source_external_id)` as the idempotency key when present.
+3. Link authors, mentioned people, subjects, reviewers, or owners through
+   `document_people` using a clear free-text `role`.
+4. Link mentioned or subject companies through `document_organizations`.
+5. Link related calls/meetings/emails through `document_interactions` only
+   when there is a true underlying CRM interaction.
+6. Generate AI notes (summary, action items, risk, coaching, etc.) and anchor
+   them with `ai_notes.document_id`.
+7. Insert structured facts into `extracted_facts`; set `document_id` to the
+   source document, and set the fact subject to the relevant person or org.
+8. Add tags via `taggings` with `target_type = 'document'` when useful.
+
+Do not shoehorn a memo or repo doc into `interactions` unless it represents an
+actual call, meeting, email, message, note event, or similar interaction.
+
 ## Recording a transcript
 
 - Store the raw transcript inline in `call_transcripts.raw_text`. Postgres
@@ -114,8 +144,8 @@ the same Gmail message or Zoom transcript should produce zero new rows.
 ## AI notes vs extracted facts
 
 - **`ai_notes`** are narrative artifacts (summaries, coaching notes, action
-  items). They are paragraphs of prose and are anchored to one
-  interaction *or* to one entity. They are not the place for structured facts.
+  items). They are paragraphs of prose and are anchored to one interaction, one
+  document, *or* one entity. They are not the place for structured facts.
 - **`extracted_facts`** are structured key/value statements. They are append
   only — to "update" a fact, insert a new row with a newer `observed_at`.
   Readers pick the latest by `(subject_type, subject_id, key)` ordered by
@@ -123,6 +153,8 @@ the same Gmail message or Zoom transcript should produce zero new rows.
 
 If a model returns both a narrative summary and a list of structured facts,
 write *both*: the summary into `ai_notes`, each fact into `extracted_facts`.
+For facts extracted from a document, set `extracted_facts.document_id` for
+provenance.
 
 ## Tags & relationship edges
 

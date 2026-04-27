@@ -67,6 +67,38 @@ This is the table to consult before inserting a new person/org from an
 external source: look up by `(source_id, kind, external_id)` and reuse the
 existing entity if found.
 
+## Documents
+
+### `documents`
+
+Durable company knowledge artifacts that are not necessarily interactions:
+internal notes, memos, research notes, strategy documents, meeting-note
+documents, contract summaries, external briefs, and similar material.
+
+Use `document_type` for a stable category such as `memo`, `research_note`,
+`meeting_notes`, `strategy_doc`, `contract_summary`, `internal_note`,
+`external_brief`, or `other`. `body` holds the source content, with
+`body_format` defaulting to `markdown`; `summary` is for a durable human or AI
+summary. `authored_at` captures when the document was written, while
+`occurred_at` can capture the date of the event the document describes.
+
+`(source_id, source_external_id)` is a partial unique idempotency key when
+`source_external_id` is present. `source_path` stores repo paths, Drive paths,
+or other durable file locations.
+
+### `document_people` / `document_organizations`
+
+Join documents to people and organizations without pretending those entities
+were meeting participants. `role` is free text so ingestion can distinguish
+`author`, `mentioned`, `subject`, `reviewer`, `owner`, `signatory`, or other
+document-specific relationships. `(document_id, entity_id, role)` is unique.
+
+### `document_interactions`
+
+Join documents to interactions when a memo summarizes a call, meeting notes
+belong to a calendar event, or a strategy document references prior CRM
+activity. `role` defaults to `related` and can be specialized by ingestion.
+
 ## Interactions
 
 ### `interactions`
@@ -97,8 +129,8 @@ ingested twice.
 ### `ai_notes`
 
 Model-generated artifacts attached either to one `interaction` or to one
-entity via `(subject_type, subject_id)` — exactly one of those two anchoring
-modes per row (CHECK enforced).
+`document` or to one entity via `(subject_type, subject_id)` — exactly one of
+those anchoring modes per row (CHECK enforced).
 
 Always write `model`, `model_version`, and `prompt_fingerprint` so older notes
 can be regenerated when prompts evolve. `kind` lets readers filter for e.g.
@@ -112,14 +144,15 @@ read key — clients should pick the most recent record by `observed_at`.
 be set (CHECK enforced).
 
 `interaction_id` and `source_id` are both optional pointers to where the fact
-came from. Use them generously: facts without provenance are noise.
+came from. `document_id` can point at the source document that produced the
+fact. Use provenance generously: facts without provenance are noise.
 
 ## Flexible structures
 
 ### `tags` / `taggings`
 
 `tags` are global (unique by `slug`). `taggings` is polymorphic over
-`{organization, person, interaction}` with a CHECK constraint, and
+`{organization, person, interaction, document}` with a CHECK constraint, and
 `(tag_id, target_type, target_id)` is unique.
 
 ### `relationship_edges`
