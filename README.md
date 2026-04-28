@@ -122,7 +122,7 @@ Top-level entities:
 - `documents`, `document_people`, `document_organizations`, `document_interactions`
 - `partnerships`, `partnership_people`, `partnership_interactions`, `partnership_documents`
 - `partnership_services`, `partnership_integrations`
-- `internal_users`, `task_teams`, `task_statuses`, `task_projects`, `tasks`
+- `team_members`, `task_teams`, `task_statuses`, `task_projects`, `tasks`
 - `task_comments`, `task_attachments`, `task_relations`
 - `call_transcripts`, `ai_notes`, `extracted_facts`
 - `semantic_embeddings`

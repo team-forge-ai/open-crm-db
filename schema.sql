@@ -226,6 +226,57 @@ $$;
 
 
 --
+-- Name: picardo_check_task_project_team(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picardo_check_task_project_team() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.project_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM task_project_teams tpt
+     WHERE tpt.project_id = NEW.project_id
+       AND tpt.team_id = NEW.team_id
+  ) THEN
+    RAISE EXCEPTION 'task project % is not linked to task team %', NEW.project_id, NEW.team_id
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: picardo_prevent_task_project_team_orphan(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.picardo_prevent_task_project_team_orphan() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM tasks t
+     WHERE t.project_id = OLD.project_id
+       AND t.team_id = OLD.team_id
+       AND t.archived_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'task project/team link is still used by active tasks'
+      USING ERRCODE = '23503';
+  END IF;
+
+  RETURN OLD;
+END;
+$$;
+
+
+--
 -- Name: picardo_search_text(text[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -267,28 +318,28 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     UNION ALL
 
     SELECT
-      'internal_user'::text AS target_type,
-      iu.id AS target_id,
-      iu.name AS title,
-      concat_ws(' / ', iu.title, iu.email::text) AS subtitle,
-      iu.updated_at AS occurred_at,
+      'team_member'::text AS target_type,
+      tm.id AS target_id,
+      tm.name AS title,
+      concat_ws(' / ', tm.title, tm.email::text) AS subtitle,
+      tm.updated_at AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(iu.name, iu.title, iu.email::text)),
+        to_tsvector('english', picardo_search_text(tm.name, tm.title, tm.email::text)),
         query.tsq,
         32
       ) AS rank,
       ts_headline(
         'english',
-        concat_ws(' ', iu.name, iu.title, iu.email::text),
+        concat_ws(' ', tm.name, tm.title, tm.email::text),
         query.tsq,
         'MaxWords=35, MinWords=8, MaxFragments=2'
       ) AS headline,
-      iu.metadata AS metadata
-    FROM internal_users iu
+      tm.metadata AS metadata
+    FROM team_members tm
     CROSS JOIN query
-    WHERE iu.archived_at IS NULL
-      AND (filter_target_types IS NULL OR 'internal_user' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(iu.name, iu.title, iu.email::text)) @@ query.tsq
+    WHERE tm.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'team_member' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(tm.name, tm.title, tm.email::text)) @@ query.tsq
 
     UNION ALL
 
@@ -350,12 +401,12 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
         'source_url', t.source_url,
         'project_id', t.project_id,
         'status_id', t.status_id,
-        'assignee_user_id', t.assignee_user_id
+        'assignee_member_id', t.assignee_member_id
       ) AS metadata
     FROM tasks t
     LEFT JOIN task_projects tp ON tp.id = t.project_id
     LEFT JOIN task_statuses ts ON ts.id = t.status_id
-    LEFT JOIN internal_users assignee ON assignee.id = t.assignee_user_id
+    LEFT JOIN team_members assignee ON assignee.id = t.assignee_member_id
     CROSS JOIN query
     WHERE t.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'task' = ANY(filter_target_types))
@@ -370,7 +421,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       'task_comment'::text AS target_type,
       tc.id AS target_id,
       COALESCE(t.source_identifier || ' comment', 'Task comment') AS title,
-      concat_ws(' / ', t.title, iu.name) AS subtitle,
+      concat_ws(' / ', t.title, tm.name) AS subtitle,
       COALESCE(tc.source_created_at, tc.created_at) AS occurred_at,
       ts_rank_cd(to_tsvector('english', left(tc.body, 250000)), query.tsq, 32) AS rank,
       ts_headline(
@@ -381,11 +432,11 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       ) AS headline,
       tc.metadata || jsonb_build_object(
         'task_id', tc.task_id,
-        'author_user_id', tc.author_user_id
+        'author_member_id', tc.author_member_id
       ) AS metadata
     FROM task_comments tc
     JOIN tasks t ON t.id = tc.task_id
-    LEFT JOIN internal_users iu ON iu.id = tc.author_user_id
+    LEFT JOIN team_members tm ON tm.id = tc.author_member_id
     CROSS JOIN query
     WHERE tc.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'task_comment' = ANY(filter_target_types))
@@ -983,29 +1034,6 @@ CREATE TABLE public.interactions (
 
 
 --
--- Name: internal_users; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.internal_users (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    name text NOT NULL,
-    title text,
-    email public.citext NOT NULL,
-    avatar_url text,
-    is_active boolean DEFAULT true NOT NULL,
-    is_bot boolean DEFAULT false NOT NULL,
-    source_id uuid,
-    source_external_id text,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    archived_at timestamp with time zone,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT internal_users_email_check CHECK ((length(TRIM(BOTH FROM (email)::text)) > 0)),
-    CONSTRAINT internal_users_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0))
-);
-
-
---
 -- Name: organization_research_profiles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1331,7 +1359,7 @@ CREATE TABLE public.semantic_embeddings (
     CONSTRAINT semantic_embeddings_content_check CHECK ((length(TRIM(BOTH FROM content)) > 0)),
     CONSTRAINT semantic_embeddings_content_sha256_check CHECK ((content_sha256 ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT semantic_embeddings_embedding_dimension_check CHECK ((embedding_dimension = 768)),
-    CONSTRAINT semantic_embeddings_target_type_check CHECK ((target_type = ANY (ARRAY['organization'::text, 'organization_research_profile'::text, 'person'::text, 'interaction'::text, 'document'::text, 'partnership'::text, 'partnership_service'::text, 'partnership_integration'::text, 'call_transcript'::text, 'ai_note'::text, 'extracted_fact'::text, 'internal_user'::text, 'task'::text, 'task_project'::text, 'task_comment'::text])))
+    CONSTRAINT semantic_embeddings_target_type_check CHECK ((target_type = ANY (ARRAY['organization'::text, 'organization_research_profile'::text, 'person'::text, 'interaction'::text, 'document'::text, 'partnership'::text, 'partnership_service'::text, 'partnership_integration'::text, 'call_transcript'::text, 'ai_note'::text, 'extracted_fact'::text, 'team_member'::text, 'task'::text, 'task_project'::text, 'task_comment'::text])))
 );
 
 
@@ -1402,6 +1430,34 @@ CREATE TABLE public.task_attachments (
 
 
 --
+-- Name: TABLE task_attachments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.task_attachments IS 'Task attachment and external-link metadata. Binary payloads are not stored here by default.';
+
+
+--
+-- Name: COLUMN task_attachments.url; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_attachments.url IS 'Attachment or external-link URL visible from Picardo.';
+
+
+--
+-- Name: COLUMN task_attachments.source_url; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_attachments.source_url IS 'Canonical upstream URL for the attachment when different from url.';
+
+
+--
+-- Name: COLUMN task_attachments.metadata; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_attachments.metadata IS 'Provider-specific attachment fields.';
+
+
+--
 -- Name: task_comments; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1409,7 +1465,7 @@ CREATE TABLE public.task_comments (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     task_id uuid NOT NULL,
     parent_comment_id uuid,
-    author_user_id uuid,
+    author_member_id uuid,
     body text NOT NULL,
     body_format text DEFAULT 'markdown'::text NOT NULL,
     source_id uuid,
@@ -1430,6 +1486,48 @@ CREATE TABLE public.task_comments (
 
 
 --
+-- Name: TABLE task_comments; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.task_comments IS 'Threaded comments attached to internal operating tasks.';
+
+
+--
+-- Name: COLUMN task_comments.author_member_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_comments.author_member_id IS 'Team member or bot actor who authored the comment.';
+
+
+--
+-- Name: COLUMN task_comments.body; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_comments.body IS 'Comment body, usually Markdown for Linear imports.';
+
+
+--
+-- Name: COLUMN task_comments.source_external_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_comments.source_external_id IS 'Stable upstream comment ID from the source system.';
+
+
+--
+-- Name: COLUMN task_comments.source_created_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_comments.source_created_at IS 'Original upstream comment creation timestamp.';
+
+
+--
+-- Name: COLUMN task_comments.source_updated_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_comments.source_updated_at IS 'Original upstream comment update timestamp.';
+
+
+--
 -- Name: task_project_teams; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1438,6 +1536,13 @@ CREATE TABLE public.task_project_teams (
     team_id uuid NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: TABLE task_project_teams; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.task_project_teams IS 'Many-to-many membership between task projects and task teams.';
 
 
 --
@@ -1455,7 +1560,7 @@ CREATE TABLE public.task_projects (
     status_type text,
     priority_value integer DEFAULT 0 NOT NULL,
     priority_label text,
-    lead_user_id uuid,
+    lead_member_id uuid,
     start_date date,
     target_date date,
     started_at timestamp with time zone,
@@ -1476,6 +1581,48 @@ CREATE TABLE public.task_projects (
 
 
 --
+-- Name: TABLE task_projects; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.task_projects IS 'Internal operating project containers for tasks.';
+
+
+--
+-- Name: COLUMN task_projects.status_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_projects.status_name IS 'Display name of the project status from the source system.';
+
+
+--
+-- Name: COLUMN task_projects.status_type; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_projects.status_type IS 'Normalized project status category, kept flexible with a CHECK constraint.';
+
+
+--
+-- Name: COLUMN task_projects.priority_value; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_projects.priority_value IS 'Numeric priority imported from Linear: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
+
+
+--
+-- Name: COLUMN task_projects.lead_member_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_projects.lead_member_id IS 'Picardo team member who leads the project, when known.';
+
+
+--
+-- Name: COLUMN task_projects.source_url; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_projects.source_url IS 'Canonical URL for the upstream project.';
+
+
+--
 -- Name: task_relations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1492,6 +1639,27 @@ CREATE TABLE public.task_relations (
     CONSTRAINT task_relations_check CHECK ((task_id <> related_task_id)),
     CONSTRAINT task_relations_relation_type_check CHECK ((relation_type = ANY (ARRAY['blocks'::text, 'blocked_by'::text, 'related'::text, 'duplicate'::text])))
 );
+
+
+--
+-- Name: TABLE task_relations; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.task_relations IS 'Directed relationships between tasks such as blocks, blocked_by, related, or duplicate.';
+
+
+--
+-- Name: COLUMN task_relations.related_task_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_relations.related_task_id IS 'The other task participating in the directed relation.';
+
+
+--
+-- Name: COLUMN task_relations.relation_type; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_relations.relation_type IS 'Directed relation kind: blocks, blocked_by, related, or duplicate.';
 
 
 --
@@ -1518,6 +1686,27 @@ CREATE TABLE public.task_statuses (
 
 
 --
+-- Name: TABLE task_statuses; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.task_statuses IS 'Team-scoped workflow states. Names are data, not PostgreSQL enum values.';
+
+
+--
+-- Name: COLUMN task_statuses.status_type; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_statuses.status_type IS 'Normalized workflow category: backlog, unstarted, started, completed, or canceled.';
+
+
+--
+-- Name: COLUMN task_statuses."position"; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_statuses."position" IS 'Source-system ordering for rendering workflow states.';
+
+
+--
 -- Name: task_teams; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1540,6 +1729,27 @@ CREATE TABLE public.task_teams (
 
 
 --
+-- Name: TABLE task_teams; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.task_teams IS 'Task workflow containers imported from Linear teams or created for Picardo internal work.';
+
+
+--
+-- Name: COLUMN task_teams.key; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_teams.key IS 'Short issue prefix or team key, for example PIC.';
+
+
+--
+-- Name: COLUMN task_teams.source_external_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.task_teams.source_external_id IS 'Stable upstream team ID from the source system.';
+
+
+--
 -- Name: tasks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1549,9 +1759,9 @@ CREATE TABLE public.tasks (
     status_id uuid,
     project_id uuid,
     parent_task_id uuid,
-    creator_user_id uuid,
-    assignee_user_id uuid,
-    delegate_user_id uuid,
+    creator_member_id uuid,
+    assignee_member_id uuid,
+    delegate_member_id uuid,
     title text NOT NULL,
     description text,
     priority_value integer DEFAULT 0 NOT NULL,
@@ -1592,6 +1802,155 @@ CREATE TABLE public.tasks (
     CONSTRAINT tasks_source_number_check CHECK (((source_number IS NULL) OR (source_number > 0))),
     CONSTRAINT tasks_title_check CHECK ((length(TRIM(BOTH FROM title)) > 0))
 );
+
+
+--
+-- Name: TABLE tasks; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.tasks IS 'Internal operating tasks, including imported Linear issues.';
+
+
+--
+-- Name: COLUMN tasks.status_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.status_id IS 'Workflow state for the task; constrained to belong to the same team as tasks.team_id.';
+
+
+--
+-- Name: COLUMN tasks.project_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.project_id IS 'Optional operating project; constrained by trigger to be linked to the task team.';
+
+
+--
+-- Name: COLUMN tasks.creator_member_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.creator_member_id IS 'Team member who created the task in the source system.';
+
+
+--
+-- Name: COLUMN tasks.assignee_member_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.assignee_member_id IS 'Team member currently responsible for the task.';
+
+
+--
+-- Name: COLUMN tasks.delegate_member_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.delegate_member_id IS 'Delegated team member or agent, when a source system provides one.';
+
+
+--
+-- Name: COLUMN tasks.priority_value; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.priority_value IS 'Numeric priority imported from Linear: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
+
+
+--
+-- Name: COLUMN tasks.source_external_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.source_external_id IS 'Stable upstream task ID. For Linear MCP imports this may be the issue identifier when UUID is not exposed.';
+
+
+--
+-- Name: COLUMN tasks.source_identifier; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.source_identifier IS 'Human-readable task identifier such as PIC-226.';
+
+
+--
+-- Name: COLUMN tasks.source_number; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.source_number IS 'Numeric portion of the human-readable task identifier.';
+
+
+--
+-- Name: COLUMN tasks.git_branch_name; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.git_branch_name IS 'Suggested or generated git branch name from the task source.';
+
+
+--
+-- Name: COLUMN tasks.metadata; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.tasks.metadata IS 'Provider-specific task fields that are useful for provenance but not worth first-class columns.';
+
+
+--
+-- Name: team_members; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.team_members (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    title text,
+    email public.citext NOT NULL,
+    avatar_url text,
+    is_active boolean DEFAULT true NOT NULL,
+    is_bot boolean DEFAULT false NOT NULL,
+    source_id uuid,
+    source_external_id text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT team_members_email_check CHECK ((length(TRIM(BOTH FROM (email)::text)) > 0)),
+    CONSTRAINT team_members_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+
+--
+-- Name: TABLE team_members; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.team_members IS 'Picardo team members and system actors who own, create, or comment on internal operational work. Not external CRM contacts.';
+
+
+--
+-- Name: COLUMN team_members.title; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.team_members.title IS 'Internal role/title for the team member, when known.';
+
+
+--
+-- Name: COLUMN team_members.is_bot; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.team_members.is_bot IS 'True for imported system or bot actors such as the Linear app user.';
+
+
+--
+-- Name: COLUMN team_members.source_external_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.team_members.source_external_id IS 'Stable upstream member/user ID from the source system.';
+
+
+--
+-- Name: COLUMN team_members.metadata; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.team_members.metadata IS 'Provider-specific member fields that are useful for provenance but not worth first-class columns.';
+
+
+--
+-- Name: COLUMN team_members.archived_at; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.team_members.archived_at IS 'Soft-delete timestamp; active team members have NULL archived_at.';
 
 
 --
@@ -1743,14 +2102,6 @@ ALTER TABLE ONLY public.interactions
 
 ALTER TABLE ONLY public.interactions
     ADD CONSTRAINT interactions_source_id_source_external_id_key UNIQUE (source_id, source_external_id);
-
-
---
--- Name: internal_users internal_users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.internal_users
-    ADD CONSTRAINT internal_users_pkey PRIMARY KEY (id);
 
 
 --
@@ -2034,6 +2385,14 @@ ALTER TABLE ONLY public.task_statuses
 
 
 --
+-- Name: task_statuses task_statuses_team_id_id_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_statuses
+    ADD CONSTRAINT task_statuses_team_id_id_key UNIQUE (team_id, id);
+
+
+--
 -- Name: task_teams task_teams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2047,6 +2406,14 @@ ALTER TABLE ONLY public.task_teams
 
 ALTER TABLE ONLY public.tasks
     ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: team_members team_members_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_members
+    ADD CONSTRAINT team_members_pkey PRIMARY KEY (id);
 
 
 --
@@ -2306,41 +2673,6 @@ CREATE INDEX idx_interactions_subject_trgm ON public.interactions USING gin (low
 --
 
 CREATE INDEX idx_interactions_type ON public.interactions USING btree (type);
-
-
---
--- Name: idx_internal_users_active; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_users_active ON public.internal_users USING btree (is_active) WHERE (archived_at IS NULL);
-
-
---
--- Name: idx_internal_users_metadata; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_users_metadata ON public.internal_users USING gin (metadata);
-
-
---
--- Name: idx_internal_users_name_trgm; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_users_name_trgm ON public.internal_users USING gin (lower(name) public.gin_trgm_ops) WHERE (archived_at IS NULL);
-
-
---
--- Name: idx_internal_users_search_fts; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_users_search_fts ON public.internal_users USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, title, (email)::text]))) WHERE (archived_at IS NULL);
-
-
---
--- Name: idx_internal_users_source; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_internal_users_source ON public.internal_users USING btree (source_id);
 
 
 --
@@ -2736,10 +3068,10 @@ CREATE INDEX idx_task_attachments_task ON public.task_attachments USING btree (t
 
 
 --
--- Name: idx_task_comments_author; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_task_comments_author_member; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_task_comments_author ON public.task_comments USING btree (author_user_id);
+CREATE INDEX idx_task_comments_author_member ON public.task_comments USING btree (author_member_id);
 
 
 --
@@ -2785,10 +3117,10 @@ CREATE INDEX idx_task_project_teams_team ON public.task_project_teams USING btre
 
 
 --
--- Name: idx_task_projects_lead; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_task_projects_lead_member; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_task_projects_lead ON public.task_projects USING btree (lead_user_id);
+CREATE INDEX idx_task_projects_lead_member ON public.task_projects USING btree (lead_member_id);
 
 
 --
@@ -2904,17 +3236,17 @@ CREATE INDEX idx_tasks_active_updated_at ON public.tasks USING btree (updated_at
 
 
 --
--- Name: idx_tasks_assignee; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_tasks_assignee_member; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_tasks_assignee ON public.tasks USING btree (assignee_user_id);
+CREATE INDEX idx_tasks_assignee_member ON public.tasks USING btree (assignee_member_id);
 
 
 --
--- Name: idx_tasks_creator; Type: INDEX; Schema: public; Owner: -
+-- Name: idx_tasks_creator_member; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_tasks_creator ON public.tasks USING btree (creator_user_id);
+CREATE INDEX idx_tasks_creator_member ON public.tasks USING btree (creator_member_id);
 
 
 --
@@ -2988,6 +3320,41 @@ CREATE INDEX idx_tasks_title_trgm ON public.tasks USING gin (lower(title) public
 
 
 --
+-- Name: idx_team_members_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_team_members_active ON public.team_members USING btree (is_active) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_team_members_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_team_members_metadata ON public.team_members USING gin (metadata);
+
+
+--
+-- Name: idx_team_members_name_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_team_members_name_trgm ON public.team_members USING gin (lower(name) public.gin_trgm_ops) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_team_members_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_team_members_search_fts ON public.team_members USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, title, (email)::text]))) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_team_members_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_team_members_source ON public.team_members USING btree (source_id);
+
+
+--
 -- Name: uq_affiliations_primary_per_person; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3013,20 +3380,6 @@ CREATE UNIQUE INDEX uq_interaction_participants_org ON public.interaction_partic
 --
 
 CREATE UNIQUE INDEX uq_interaction_participants_person ON public.interaction_participants USING btree (interaction_id, person_id, role) WHERE (person_id IS NOT NULL);
-
-
---
--- Name: uq_internal_users_email; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_internal_users_email ON public.internal_users USING btree (email);
-
-
---
--- Name: uq_internal_users_source_external_id; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX uq_internal_users_source_external_id ON public.internal_users USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
 
 
 --
@@ -3135,6 +3488,20 @@ CREATE UNIQUE INDEX uq_tasks_source_identifier ON public.tasks USING btree (sour
 
 
 --
+-- Name: uq_team_members_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_team_members_email ON public.team_members USING btree (email);
+
+
+--
+-- Name: uq_team_members_source_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_team_members_source_external_id ON public.team_members USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
+
+
+--
 -- Name: affiliations trg_affiliations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -3209,13 +3576,6 @@ CREATE TRIGGER trg_interaction_participants_updated_at BEFORE UPDATE ON public.i
 --
 
 CREATE TRIGGER trg_interactions_updated_at BEFORE UPDATE ON public.interactions FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
-
-
---
--- Name: internal_users trg_internal_users_updated_at; Type: TRIGGER; Schema: public; Owner: -
---
-
-CREATE TRIGGER trg_internal_users_updated_at BEFORE UPDATE ON public.internal_users FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
 
 
 --
@@ -3338,6 +3698,13 @@ CREATE TRIGGER trg_task_comments_updated_at BEFORE UPDATE ON public.task_comment
 
 
 --
+-- Name: task_project_teams trg_task_project_teams_no_orphan; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_task_project_teams_no_orphan BEFORE DELETE OR UPDATE OF project_id, team_id ON public.task_project_teams FOR EACH ROW EXECUTE FUNCTION public.picardo_prevent_task_project_team_orphan();
+
+
+--
 -- Name: task_projects trg_task_projects_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -3366,10 +3733,24 @@ CREATE TRIGGER trg_task_teams_updated_at BEFORE UPDATE ON public.task_teams FOR 
 
 
 --
+-- Name: tasks trg_tasks_project_team_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_tasks_project_team_guard BEFORE INSERT OR UPDATE OF project_id, team_id ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.picardo_check_task_project_team();
+
+
+--
 -- Name: tasks trg_tasks_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
 CREATE TRIGGER trg_tasks_updated_at BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: team_members trg_team_members_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_team_members_updated_at BEFORE UPDATE ON public.team_members FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
 
 
 --
@@ -3554,14 +3935,6 @@ ALTER TABLE ONLY public.interaction_participants
 
 ALTER TABLE ONLY public.interactions
     ADD CONSTRAINT interactions_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
-
-
---
--- Name: internal_users internal_users_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.internal_users
-    ADD CONSTRAINT internal_users_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
 
 
 --
@@ -3757,11 +4130,11 @@ ALTER TABLE ONLY public.task_attachments
 
 
 --
--- Name: task_comments task_comments_author_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: task_comments task_comments_author_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.task_comments
-    ADD CONSTRAINT task_comments_author_user_id_fkey FOREIGN KEY (author_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+    ADD CONSTRAINT task_comments_author_member_id_fkey FOREIGN KEY (author_member_id) REFERENCES public.team_members(id) ON DELETE SET NULL;
 
 
 --
@@ -3805,11 +4178,11 @@ ALTER TABLE ONLY public.task_project_teams
 
 
 --
--- Name: task_projects task_projects_lead_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: task_projects task_projects_lead_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.task_projects
-    ADD CONSTRAINT task_projects_lead_user_id_fkey FOREIGN KEY (lead_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+    ADD CONSTRAINT task_projects_lead_member_id_fkey FOREIGN KEY (lead_member_id) REFERENCES public.team_members(id) ON DELETE SET NULL;
 
 
 --
@@ -3869,27 +4242,27 @@ ALTER TABLE ONLY public.task_teams
 
 
 --
--- Name: tasks tasks_assignee_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: tasks tasks_assignee_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tasks
-    ADD CONSTRAINT tasks_assignee_user_id_fkey FOREIGN KEY (assignee_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+    ADD CONSTRAINT tasks_assignee_member_id_fkey FOREIGN KEY (assignee_member_id) REFERENCES public.team_members(id) ON DELETE SET NULL;
 
 
 --
--- Name: tasks tasks_creator_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.tasks
-    ADD CONSTRAINT tasks_creator_user_id_fkey FOREIGN KEY (creator_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
-
-
---
--- Name: tasks tasks_delegate_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: tasks tasks_creator_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tasks
-    ADD CONSTRAINT tasks_delegate_user_id_fkey FOREIGN KEY (delegate_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+    ADD CONSTRAINT tasks_creator_member_id_fkey FOREIGN KEY (creator_member_id) REFERENCES public.team_members(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_delegate_member_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_delegate_member_id_fkey FOREIGN KEY (delegate_member_id) REFERENCES public.team_members(id) ON DELETE SET NULL;
 
 
 --
@@ -3917,19 +4290,27 @@ ALTER TABLE ONLY public.tasks
 
 
 --
--- Name: tasks tasks_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.tasks
-    ADD CONSTRAINT tasks_status_id_fkey FOREIGN KEY (status_id) REFERENCES public.task_statuses(id) ON DELETE SET NULL;
-
-
---
 -- Name: tasks tasks_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.tasks
     ADD CONSTRAINT tasks_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.task_teams(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: tasks tasks_team_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_team_status_id_fkey FOREIGN KEY (team_id, status_id) REFERENCES public.task_statuses(team_id, id) ON DELETE SET NULL (status_id);
+
+
+--
+-- Name: team_members team_members_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.team_members
+    ADD CONSTRAINT team_members_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
 
 
 --

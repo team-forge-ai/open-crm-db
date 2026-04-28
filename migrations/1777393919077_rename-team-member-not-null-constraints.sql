@@ -1,0 +1,21 @@
+-- Up Migration
+
+ALTER TABLE team_members RENAME CONSTRAINT internal_users_id_not_null TO team_members_id_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT internal_users_name_not_null TO team_members_name_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT internal_users_email_not_null TO team_members_email_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT internal_users_is_active_not_null TO team_members_is_active_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT internal_users_is_bot_not_null TO team_members_is_bot_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT internal_users_metadata_not_null TO team_members_metadata_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT internal_users_created_at_not_null TO team_members_created_at_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT internal_users_updated_at_not_null TO team_members_updated_at_not_null;
+
+-- Down Migration
+
+ALTER TABLE team_members RENAME CONSTRAINT team_members_updated_at_not_null TO internal_users_updated_at_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT team_members_created_at_not_null TO internal_users_created_at_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT team_members_metadata_not_null TO internal_users_metadata_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT team_members_is_bot_not_null TO internal_users_is_bot_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT team_members_is_active_not_null TO internal_users_is_active_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT team_members_email_not_null TO internal_users_email_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT team_members_name_not_null TO internal_users_name_not_null;
+ALTER TABLE team_members RENAME CONSTRAINT team_members_id_not_null TO internal_users_id_not_null;

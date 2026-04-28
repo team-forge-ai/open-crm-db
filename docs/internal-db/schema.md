@@ -34,11 +34,11 @@ update this file in the same PR.
 
 ## Core entities
 
-### `internal_users`
+### `team_members`
 
 Picardo operators and system actors, such as Alex, Alana, and imported bot
 actors. This table is intentionally separate from `people`: `people` is for
-external CRM contacts and counterparties, while `internal_users` is for owners,
+external CRM contacts and counterparties, while `team_members` is for owners,
 assignees, creators, project leads, and comment authors inside Picardo's
 operating layer.
 
@@ -227,7 +227,7 @@ Operating project containers such as `Product`, `Marketing & Launch`,
 `Corporate & Legal Setup`, `GTM - Healthshare / Enterprise`, and `Payments`.
 
 Projects store status, priority, start/target dates, lifecycle timestamps, a
-lead internal user, source URL, and metadata. Linear milestones and cycles are
+lead team member, source URL, and metadata. Linear milestones and cycles are
 not modeled yet because Picardo's current Linear workspace does not use them.
 
 ### `task_project_teams`
@@ -246,13 +246,13 @@ metadata.
 
 `source_external_id` is the upstream stable ID when available.
 `source_identifier` stores human-readable identifiers such as `PIC-226`, and
-`source_number` stores the numeric issue number. Internal users, not CRM
+`source_number` stores the numeric issue number. Team members, not CRM
 `people`, own creator/assignee/delegate relationships.
 
 ### `task_comments`
 
 Threaded task comments in Markdown or plain text. Comments link to
-`internal_users` for authors and preserve source IDs plus source-created /
+`team_members` for authors and preserve source IDs plus source-created /
 source-updated timestamps for idempotent imports. Use this table for imported
 Linear comments rather than storing comment bodies inside `tasks.metadata`.
 
@@ -324,7 +324,7 @@ text chunk, a SHA-256 content hash, model metadata, and a `vector(768)`
 embedding. `target_type` / `target_id` points back to the CRM record being
 indexed, such as an organization, person, document, interaction,
 call transcript, AI note, extracted fact, partnership, service, integration,
-organization research profile, internal user, task project, task, or task
+organization research profile, team member, task project, task, or task
 comment.
 
 Only one active embedding is allowed per `(target, provider, model, version,

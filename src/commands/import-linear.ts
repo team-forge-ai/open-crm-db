@@ -518,7 +518,7 @@ async function upsertInternalUser(
 ): Promise<string> {
   const result = await client.query<{ id: string }>(
     `
-      insert into internal_users (
+      insert into team_members (
         name,
         title,
         email,
@@ -557,7 +557,7 @@ async function upsertInternalUser(
       }),
     ],
   )
-  return requireRowId(result.rows[0], `internal user ${user.email}`)
+  return requireRowId(result.rows[0], `team member ${user.email}`)
 }
 
 async function upsertTaskTeam(
@@ -669,7 +669,7 @@ async function upsertTaskProject(
         status_type,
         priority_value,
         priority_label,
-        lead_user_id,
+        lead_member_id,
         start_date,
         target_date,
         started_at,
@@ -696,7 +696,7 @@ async function upsertTaskProject(
           status_type = excluded.status_type,
           priority_value = excluded.priority_value,
           priority_label = excluded.priority_label,
-          lead_user_id = excluded.lead_user_id,
+          lead_member_id = excluded.lead_member_id,
           start_date = excluded.start_date,
           target_date = excluded.target_date,
           started_at = excluded.started_at,
@@ -789,8 +789,8 @@ async function upsertTask(
         team_id,
         status_id,
         project_id,
-        creator_user_id,
-        assignee_user_id,
+        creator_member_id,
+        assignee_member_id,
         title,
         description,
         priority_value,
@@ -828,8 +828,8 @@ async function upsertTask(
           team_id = excluded.team_id,
           status_id = excluded.status_id,
           project_id = excluded.project_id,
-          creator_user_id = excluded.creator_user_id,
-          assignee_user_id = excluded.assignee_user_id,
+          creator_member_id = excluded.creator_member_id,
+          assignee_member_id = excluded.assignee_member_id,
           title = excluded.title,
           description = excluded.description,
           priority_value = excluded.priority_value,
@@ -1001,7 +1001,7 @@ async function upsertTaskComments(
       `
         insert into task_comments (
           task_id,
-          author_user_id,
+          author_member_id,
           body,
           source_id,
           source_external_id,
@@ -1013,7 +1013,7 @@ async function upsertTaskComments(
         on conflict (source_id, source_external_id) where source_external_id is not null
           do update set
             task_id = excluded.task_id,
-            author_user_id = excluded.author_user_id,
+            author_member_id = excluded.author_member_id,
             body = excluded.body,
             source_created_at = excluded.source_created_at,
             source_updated_at = excluded.source_updated_at,

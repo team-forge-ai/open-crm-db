@@ -65,7 +65,7 @@ match**. In order of preference:
 If you create a new entity, immediately record the originating external ID in
 `external_identities` so the next ingestion run finds it.
 
-Internal Picardo operators are **not** CRM `people`. Use `internal_users` for
+Internal Picardo operators are **not** CRM `people`. Use `team_members` for
 task creators, assignees, delegates, project leads, and comment authors. Use
 `people` only for external contacts and counterparties.
 
@@ -90,7 +90,7 @@ For `interactions`, `call_transcripts`, and `documents`, the unique index
 external ID exists. Re-ingesting the same Gmail message, Zoom transcript, or
 repo document should produce zero duplicate rows.
 
-For task imports, use the source-backed unique indexes on `internal_users`,
+For task imports, use the source-backed unique indexes on `team_members`,
 `task_teams`, `task_statuses`, `task_projects`, `tasks`, `task_comments`, and
 `task_attachments`. For Linear issues, store the human-readable identifier
 (`PIC-226`) in `tasks.source_identifier` and the upstream stable ID in
@@ -103,7 +103,7 @@ Run `pnpm import:linear` to inventory Linear without writes, and
 `pnpm import:linear --apply` to write the import idempotently.
 
 1. Resolve / create the source in `sources` (`linear` for Linear imports).
-2. Resolve / create internal users in `internal_users` by
+2. Resolve / create team members in `team_members` by
    `(source_id, source_external_id)` or by `email`.
 3. Upsert the team in `task_teams`.
 4. Upsert workflow states in `task_statuses`; statuses are team-scoped rows,
@@ -118,7 +118,7 @@ Run `pnpm import:linear` to inventory Linear without writes, and
 8. Upsert comments into `task_comments`, attachments/link metadata into
    `task_attachments`, and task relationships into `task_relations`.
 
-Do not link task assignees or creators to CRM `people`; use `internal_users`.
+Do not link task assignees or creators to CRM `people`; use `team_members`.
 If a task mentions an external contact or organization, link that later through
 a dedicated task-to-CRM relationship migration rather than overloading
 assignee fields.

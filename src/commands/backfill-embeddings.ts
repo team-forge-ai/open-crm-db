@@ -62,7 +62,7 @@ const TARGET_TYPES = [
   'call_transcript',
   'ai_note',
   'extracted_fact',
-  'internal_user',
+  'team_member',
   'task_project',
   'task',
   'task_comment',
@@ -588,17 +588,17 @@ async function fetchSourceCandidates(
         union all
 
         select
-          'internal_user'::text,
+          'team_member'::text,
           iu.id,
           iu.name,
           iu.updated_at,
           concat_ws(E'\\n',
-            'Internal user: ' || iu.name,
+            'Team member: ' || iu.name,
             'Title: ' || iu.title,
             'Email: ' || iu.email::text,
             'Bot: ' || iu.is_bot::text
           )
-        from internal_users iu
+        from team_members iu
         where iu.archived_at is null
 
         union all
@@ -649,8 +649,8 @@ async function fetchSourceCandidates(
         left join task_projects tp on tp.id = t.project_id
         left join task_teams tt on tt.id = t.team_id
         left join task_statuses ts on ts.id = t.status_id
-        left join internal_users assignee on assignee.id = t.assignee_user_id
-        left join internal_users creator on creator.id = t.creator_user_id
+        left join team_members assignee on assignee.id = t.assignee_member_id
+        left join team_members creator on creator.id = t.creator_member_id
         where t.archived_at is null
 
         union all
@@ -668,7 +668,7 @@ async function fetchSourceCandidates(
           )
         from task_comments tc
         join tasks t on t.id = tc.task_id
-        left join internal_users iu on iu.id = tc.author_user_id
+        left join team_members iu on iu.id = tc.author_member_id
         where tc.archived_at is null
       )
       select
