@@ -1,5 +1,5 @@
 import crypto from 'node:crypto'
-import { spawn } from 'node:child_process'
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process'
 import { homedir } from 'node:os'
 import path from 'node:path'
 import dotenv from 'dotenv'
@@ -13,6 +13,9 @@ const DEFAULT_CHUNK_SIZE = 6_000
 const DEFAULT_CHUNK_OVERLAP = 500
 const DEFAULT_EMBED_BATCH_SIZE = 8
 const EMBEDDING_DIMENSION = 768
+// Persistent MLX worker: load the model once, then read newline-delimited JSON
+// requests from stdin and write newline-delimited JSON responses to stdout.
+// This avoids paying the model-load cost (~3-5s) for every source record.
 const MLX_EMBED_SCRIPT = `
 import json
 import sys
@@ -21,20 +24,30 @@ import mlx.core as mx
 
 model_name = sys.argv[1]
 batch_size = int(sys.argv[2])
-texts = json.load(sys.stdin)
 
 model, tokenizer = load(model_name)
-embeddings = []
+sys.stdout.write(json.dumps({"ready": True}) + "\\n")
+sys.stdout.flush()
 
-for start in range(0, len(texts), batch_size):
-    batch = texts[start:start + batch_size]
-    encoded = tokenizer(batch, padding=True, truncation=True, return_tensors="mlx")
-    output = model(encoded["input_ids"], encoded["attention_mask"])
-    batch_embeddings = output.text_embeds
-    mx.eval(batch_embeddings)
-    embeddings.extend(batch_embeddings.tolist())
-
-print(json.dumps(embeddings))
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        request = json.loads(line)
+        texts = request["texts"]
+        embeddings = []
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start:start + batch_size]
+            encoded = tokenizer(batch, padding=True, truncation=True, return_tensors="mlx")
+            output = model(encoded["input_ids"], encoded["attention_mask"])
+            batch_embeddings = output.text_embeds
+            mx.eval(batch_embeddings)
+            embeddings.extend(batch_embeddings.tolist())
+        sys.stdout.write(json.dumps({"embeddings": embeddings}) + "\\n")
+    except Exception as exc:  # noqa: BLE001
+        sys.stdout.write(json.dumps({"error": str(exc)}) + "\\n")
+    sys.stdout.flush()
 `
 
 const TARGET_TYPES = [
@@ -130,6 +143,7 @@ export async function backfillEmbeddings(
     written: 0,
   }
 
+  let embedder: MlxEmbedder | null = null
   try {
     await assertEmbeddingSchema(pool)
     if (normalized.apply) {
@@ -171,7 +185,10 @@ export async function backfillEmbeddings(
         continue
       }
 
-      const embeddings = await embedChunks(normalized, chunks)
+      if (!embedder) {
+        embedder = await MlxEmbedder.start(normalized)
+      }
+      const embeddings = await embedChunks(embedder, normalized, chunks)
       stats.embedded += embeddings.length
       await writeChunks(pool, normalized, candidate, chunks, embeddings)
       const archived = await archiveStaleChunks(
@@ -210,6 +227,9 @@ export async function backfillEmbeddings(
       console.log('Dry run only. Re-run with --apply to write embeddings.')
     }
   } finally {
+    if (embedder) {
+      await embedder.stop()
+    }
     await pool.end()
   }
 }
@@ -695,37 +715,18 @@ function chunksChanged(chunks: ContentChunk[], existing: ExistingChunk[]): boole
 }
 
 async function embedChunks(
+  embedder: MlxEmbedder,
   options: NormalizedOptions,
   chunks: ContentChunk[],
 ): Promise<number[][]> {
   const inputs = chunks.map((chunk) => `title: none | text: ${chunk.content}`)
-  const stdout = await runProcess(
-    'uv',
-    [
-      'run',
-      '--quiet',
-      '--with',
-      'mlx-embeddings',
-      '--with',
-      'mlx',
-      'python',
-      '-c',
-      MLX_EMBED_SCRIPT,
-      options.model,
-      String(options.batchSize),
-    ],
-    JSON.stringify(inputs),
-    {
-      HF_HUB_DISABLE_PROGRESS_BARS: '1',
-    },
-  )
+  const embeddings = await embedder.embed(inputs)
 
-  const parsed = JSON.parse(stdout) as unknown
-  if (!Array.isArray(parsed) || parsed.length !== chunks.length) {
-    throw new Error('MLX embedding command returned an unexpected response.')
+  if (embeddings.length !== chunks.length) {
+    throw new Error('MLX embedding worker returned an unexpected response.')
   }
 
-  return parsed.map((embedding, index) => {
+  return embeddings.map((embedding, index) => {
     if (!isNumberArray(embedding)) {
       throw new Error(`MLX embedding ${index} is not a numeric vector.`)
     }
@@ -736,6 +737,189 @@ async function embedChunks(
     }
     return embedding
   })
+}
+
+class MlxEmbedder {
+  private constructor(
+    private readonly child: ChildProcessWithoutNullStreams,
+    private buffer: string,
+    private pending: {
+      resolve: (value: unknown[]) => void
+      reject: (error: Error) => void
+    }[],
+    private exitError: Error | null,
+  ) {}
+
+  static async start(options: NormalizedOptions): Promise<MlxEmbedder> {
+    const child = spawn(
+      'uv',
+      [
+        'run',
+        '--quiet',
+        '--with',
+        'mlx-embeddings',
+        '--with',
+        'mlx',
+        'python',
+        '-c',
+        MLX_EMBED_SCRIPT,
+        options.model,
+        String(options.batchSize),
+      ],
+      {
+        env: { ...process.env, HF_HUB_DISABLE_PROGRESS_BARS: '1' },
+        stdio: ['pipe', 'pipe', 'pipe'],
+      },
+    )
+    child.stdout.setEncoding('utf8')
+    child.stderr.setEncoding('utf8')
+
+    const embedder = new MlxEmbedder(child, '', [], null)
+
+    let stderrTail = ''
+    child.stderr.on('data', (chunk: string) => {
+      stderrTail = (stderrTail + chunk).slice(-2000)
+    })
+
+    child.stdout.on('data', (chunk: string) => {
+      embedder.handleStdout(chunk)
+    })
+
+    child.on('error', (err) => {
+      embedder.fail(err)
+    })
+
+    child.on('close', (code) => {
+      embedder.fail(
+        new Error(
+          `MLX embedder exited with code ${code ?? 'unknown'}: ${stderrTail.trim()}`,
+        ),
+      )
+    })
+
+    // Wait for the worker to signal readiness.
+    await new Promise<void>((resolve, reject) => {
+      const onReady = (line: string) => {
+        try {
+          const parsed = JSON.parse(line) as { ready?: boolean; error?: string }
+          if (parsed.ready) {
+            embedder.removeReadyListener(onReady)
+            resolve()
+          } else if (parsed.error) {
+            embedder.removeReadyListener(onReady)
+            reject(new Error(`MLX embedder failed to start: ${parsed.error}`))
+          }
+        } catch (err) {
+          embedder.removeReadyListener(onReady)
+          reject(err instanceof Error ? err : new Error(String(err)))
+        }
+      }
+      embedder.readyListeners.push(onReady)
+      child.once('error', reject)
+      child.once('close', (code) => {
+        if (code !== 0) {
+          reject(
+            new Error(
+              `MLX embedder exited before becoming ready (code ${code ?? 'unknown'}): ${stderrTail.trim()}`,
+            ),
+          )
+        }
+      })
+    })
+
+    return embedder
+  }
+
+  private readyListeners: Array<(line: string) => void> = []
+
+  private removeReadyListener(listener: (line: string) => void): void {
+    this.readyListeners = this.readyListeners.filter((l) => l !== listener)
+  }
+
+  private handleStdout(chunk: string): void {
+    this.buffer += chunk
+    let newlineIndex: number
+    while ((newlineIndex = this.buffer.indexOf('\n')) >= 0) {
+      const line = this.buffer.slice(0, newlineIndex).trim()
+      this.buffer = this.buffer.slice(newlineIndex + 1)
+      if (!line) {
+        continue
+      }
+
+      if (this.readyListeners.length > 0) {
+        for (const listener of this.readyListeners) {
+          listener(line)
+        }
+        continue
+      }
+
+      this.handleResponse(line)
+    }
+  }
+
+  private handleResponse(line: string): void {
+    const next = this.pending.shift()
+    if (!next) {
+      return
+    }
+    try {
+      const parsed = JSON.parse(line) as {
+        embeddings?: unknown[]
+        error?: string
+      }
+      if (parsed.error) {
+        next.reject(new Error(`MLX embedder error: ${parsed.error}`))
+        return
+      }
+      if (!Array.isArray(parsed.embeddings)) {
+        next.reject(new Error('MLX embedder returned no embeddings array.'))
+        return
+      }
+      next.resolve(parsed.embeddings)
+    } catch (err) {
+      next.reject(err instanceof Error ? err : new Error(String(err)))
+    }
+  }
+
+  private fail(error: Error): void {
+    if (!this.exitError) {
+      this.exitError = error
+    }
+    while (this.pending.length > 0) {
+      const next = this.pending.shift()
+      next?.reject(this.exitError)
+    }
+  }
+
+  async embed(texts: string[]): Promise<unknown[]> {
+    if (this.exitError) {
+      throw this.exitError
+    }
+    return new Promise<unknown[]>((resolve, reject) => {
+      this.pending.push({ resolve, reject })
+      this.child.stdin.write(JSON.stringify({ texts }) + '\n')
+    })
+  }
+
+  async stop(): Promise<void> {
+    if (this.child.exitCode !== null || this.child.killed) {
+      return
+    }
+    await new Promise<void>((resolve) => {
+      this.child.once('close', () => resolve())
+      try {
+        this.child.stdin.end()
+      } catch {
+        // ignore
+      }
+      // Defensive timeout — if the worker hangs, force kill.
+      setTimeout(() => {
+        if (this.child.exitCode === null && !this.child.killed) {
+          this.child.kill('SIGTERM')
+        }
+      }, 5000).unref()
+    })
+  }
 }
 
 function isNumberArray(value: unknown): value is number[] {
