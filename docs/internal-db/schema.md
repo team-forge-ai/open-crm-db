@@ -198,6 +198,24 @@ patient data.
 or a proprietary API schema. `consent_required` and `baa_required` record
 high-level compliance gating without replacing legal review.
 
+### `partner_integration_board`
+
+Kanban-oriented read model for partner integration status. It emits one card
+per active `partnership_integrations` row and includes active partnership,
+organization, service, status, compliance, and ordering fields needed to render
+a board.
+
+Primary board grouping fields are `lane_id`, `lane_name`, and `lane_order`.
+Lanes mirror integration status: `not_started`, `sandbox`, `building`,
+`testing`, `production`, `paused`, and `retired`. The view also reserves an
+`unmapped` lane for active partnerships or services without an active
+integration row, so missing integration status remains visible.
+
+Use `priority_order`, `partnership_stage_order`, and
+`service_status_order` to sort cards within lanes. `card_labels` is a compact
+derived badge list for rendering, while `metadata` carries combined
+partnership, service, and integration metadata for drill-down views.
+
 ## Tasks
 
 Task management is modeled as an internal operating layer. It imports Linear

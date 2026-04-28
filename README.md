@@ -129,6 +129,10 @@ Top-level entities:
 - `tags` / `taggings`, `relationship_edges`
 - `sources`, `external_identities`
 
+Convenience views:
+
+- `partner_integration_board` — kanban-oriented partner integration status
+
 ## Search
 
 The database supports two lightweight search paths:

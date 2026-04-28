@@ -1092,22 +1092,6 @@ CREATE TABLE public.organizations (
 
 
 --
--- Name: partnership_documents; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.partnership_documents (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    partnership_id uuid NOT NULL,
-    document_id uuid NOT NULL,
-    role text DEFAULT 'related'::text NOT NULL,
-    notes text,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
 -- Name: partnership_integrations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1132,38 +1116,6 @@ CREATE TABLE public.partnership_integrations (
     CONSTRAINT partnership_integrations_integration_type_check CHECK ((integration_type = ANY (ARRAY['api'::text, 'webhook'::text, 'sftp'::text, 'manual_upload'::text, 'pdf_import'::text, 'email'::text, 'portal'::text, 'other'::text]))),
     CONSTRAINT partnership_integrations_status_check CHECK ((status = ANY (ARRAY['not_started'::text, 'sandbox'::text, 'building'::text, 'testing'::text, 'production'::text, 'paused'::text, 'retired'::text]))),
     CONSTRAINT partnership_integrations_sync_direction_check CHECK ((sync_direction = ANY (ARRAY['inbound'::text, 'outbound'::text, 'bidirectional'::text])))
-);
-
-
---
--- Name: partnership_interactions; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.partnership_interactions (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    partnership_id uuid NOT NULL,
-    interaction_id uuid NOT NULL,
-    role text DEFAULT 'related'::text NOT NULL,
-    notes text,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
-);
-
-
---
--- Name: partnership_people; Type: TABLE; Schema: public; Owner: -
---
-
-CREATE TABLE public.partnership_people (
-    id uuid DEFAULT gen_random_uuid() NOT NULL,
-    partnership_id uuid NOT NULL,
-    person_id uuid NOT NULL,
-    role text NOT NULL,
-    notes text,
-    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
-    created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 
@@ -1241,6 +1193,405 @@ CREATE TABLE public.people (
     notes text,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: partner_integration_board; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.partner_integration_board AS
+ WITH integration_cards AS (
+         SELECT ('integration:'::text || (pi.id)::text) AS card_id,
+            'integration'::text AS card_kind,
+            pi.status AS lane_id,
+                CASE pi.status
+                    WHEN 'not_started'::text THEN 'Not started'::text
+                    WHEN 'sandbox'::text THEN 'Sandbox'::text
+                    WHEN 'building'::text THEN 'Building'::text
+                    WHEN 'testing'::text THEN 'Testing'::text
+                    WHEN 'production'::text THEN 'Production'::text
+                    WHEN 'paused'::text THEN 'Paused'::text
+                    WHEN 'retired'::text THEN 'Retired'::text
+                    ELSE initcap(replace(pi.status, '_'::text, ' '::text))
+                END AS lane_name,
+                CASE pi.status
+                    WHEN 'not_started'::text THEN 10
+                    WHEN 'sandbox'::text THEN 20
+                    WHEN 'building'::text THEN 30
+                    WHEN 'testing'::text THEN 40
+                    WHEN 'production'::text THEN 50
+                    WHEN 'paused'::text THEN 60
+                    WHEN 'retired'::text THEN 70
+                    ELSE 999
+                END AS lane_order,
+            concat_ws(' - '::text, o.name, initcap(replace(pi.integration_type, '_'::text, ' '::text))) AS card_title,
+            concat_ws(' / '::text, p.name, ps.name) AS card_subtitle,
+            o.id AS organization_id,
+            o.name AS organization_name,
+            o.slug AS organization_slug,
+            (o.domain)::text AS organization_domain,
+            p.id AS partnership_id,
+            p.name AS partnership_name,
+            p.partnership_type,
+            p.stage AS partnership_stage,
+                CASE p.stage
+                    WHEN 'prospect'::text THEN 10
+                    WHEN 'intro'::text THEN 20
+                    WHEN 'discovery'::text THEN 30
+                    WHEN 'diligence'::text THEN 40
+                    WHEN 'pilot'::text THEN 50
+                    WHEN 'contracting'::text THEN 60
+                    WHEN 'live'::text THEN 70
+                    WHEN 'paused'::text THEN 80
+                    WHEN 'lost'::text THEN 90
+                    ELSE 999
+                END AS partnership_stage_order,
+            p.priority,
+                CASE p.priority
+                    WHEN 'strategic'::text THEN 10
+                    WHEN 'high'::text THEN 20
+                    WHEN 'medium'::text THEN 30
+                    WHEN 'low'::text THEN 40
+                    ELSE 999
+                END AS priority_order,
+            p.owner_person_id,
+            COALESCE(owner.display_name, owner.full_name) AS owner_name,
+            ps.id AS service_id,
+            ps.name AS service_name,
+            ps.service_type,
+            ps.status AS service_status,
+                CASE ps.status
+                    WHEN 'proposed'::text THEN 10
+                    WHEN 'validating'::text THEN 20
+                    WHEN 'build_ready'::text THEN 30
+                    WHEN 'live'::text THEN 40
+                    WHEN 'paused'::text THEN 50
+                    WHEN 'retired'::text THEN 60
+                    ELSE 999
+                END AS service_status_order,
+            ps.patient_facing,
+            pi.id AS integration_id,
+            pi.integration_type,
+            pi.status AS integration_status,
+                CASE pi.status
+                    WHEN 'not_started'::text THEN 10
+                    WHEN 'sandbox'::text THEN 20
+                    WHEN 'building'::text THEN 30
+                    WHEN 'testing'::text THEN 40
+                    WHEN 'production'::text THEN 50
+                    WHEN 'paused'::text THEN 60
+                    WHEN 'retired'::text THEN 70
+                    ELSE 999
+                END AS integration_status_order,
+            pi.sync_direction,
+            pi.data_formats,
+            pi.consent_required,
+            pi.baa_required,
+            pi.last_sync_at,
+            p.signed_at,
+            p.launched_at,
+            p.status_notes,
+            pi.notes AS integration_notes,
+            ps.clinical_use,
+            array_remove(ARRAY[p.partnership_type, p.priority, pi.integration_type, pi.sync_direction,
+                CASE
+                    WHEN pi.consent_required THEN 'consent_required'::text
+                    ELSE NULL::text
+                END,
+                CASE
+                    WHEN pi.baa_required THEN 'baa_required'::text
+                    ELSE NULL::text
+                END,
+                CASE
+                    WHEN ps.patient_facing THEN 'patient_facing'::text
+                    ELSE NULL::text
+                END], NULL::text) AS card_labels,
+            jsonb_build_object('partnership_metadata', p.metadata, 'service_metadata', COALESCE(ps.metadata, '{}'::jsonb), 'integration_metadata', pi.metadata) AS metadata,
+            LEAST(p.created_at, pi.created_at, COALESCE(ps.created_at, pi.created_at)) AS created_at,
+            GREATEST(p.updated_at, pi.updated_at, COALESCE(ps.updated_at, pi.updated_at)) AS updated_at
+           FROM ((((public.partnership_integrations pi
+             JOIN public.partnerships p ON ((p.id = pi.partnership_id)))
+             JOIN public.organizations o ON ((o.id = p.organization_id)))
+             LEFT JOIN public.partnership_services ps ON (((ps.id = pi.service_id) AND (ps.archived_at IS NULL))))
+             LEFT JOIN public.people owner ON ((owner.id = p.owner_person_id)))
+          WHERE ((p.archived_at IS NULL) AND (o.archived_at IS NULL) AND (pi.archived_at IS NULL))
+        ), unmapped_cards AS (
+         SELECT
+                CASE
+                    WHEN (ps.id IS NULL) THEN ('partnership:'::text || (p.id)::text)
+                    ELSE ('service:'::text || (ps.id)::text)
+                END AS card_id,
+                CASE
+                    WHEN (ps.id IS NULL) THEN 'partnership'::text
+                    ELSE 'service'::text
+                END AS card_kind,
+            'unmapped'::text AS lane_id,
+            'Unmapped'::text AS lane_name,
+            0 AS lane_order,
+            concat_ws(' - '::text, o.name, ps.name) AS card_title,
+            p.name AS card_subtitle,
+            o.id AS organization_id,
+            o.name AS organization_name,
+            o.slug AS organization_slug,
+            (o.domain)::text AS organization_domain,
+            p.id AS partnership_id,
+            p.name AS partnership_name,
+            p.partnership_type,
+            p.stage AS partnership_stage,
+                CASE p.stage
+                    WHEN 'prospect'::text THEN 10
+                    WHEN 'intro'::text THEN 20
+                    WHEN 'discovery'::text THEN 30
+                    WHEN 'diligence'::text THEN 40
+                    WHEN 'pilot'::text THEN 50
+                    WHEN 'contracting'::text THEN 60
+                    WHEN 'live'::text THEN 70
+                    WHEN 'paused'::text THEN 80
+                    WHEN 'lost'::text THEN 90
+                    ELSE 999
+                END AS partnership_stage_order,
+            p.priority,
+                CASE p.priority
+                    WHEN 'strategic'::text THEN 10
+                    WHEN 'high'::text THEN 20
+                    WHEN 'medium'::text THEN 30
+                    WHEN 'low'::text THEN 40
+                    ELSE 999
+                END AS priority_order,
+            p.owner_person_id,
+            COALESCE(owner.display_name, owner.full_name) AS owner_name,
+            ps.id AS service_id,
+            ps.name AS service_name,
+            ps.service_type,
+            ps.status AS service_status,
+                CASE ps.status
+                    WHEN 'proposed'::text THEN 10
+                    WHEN 'validating'::text THEN 20
+                    WHEN 'build_ready'::text THEN 30
+                    WHEN 'live'::text THEN 40
+                    WHEN 'paused'::text THEN 50
+                    WHEN 'retired'::text THEN 60
+                    ELSE 999
+                END AS service_status_order,
+            COALESCE(ps.patient_facing, false) AS patient_facing,
+            NULL::uuid AS integration_id,
+            NULL::text AS integration_type,
+            'unmapped'::text AS integration_status,
+            0 AS integration_status_order,
+            NULL::text AS sync_direction,
+            '[]'::jsonb AS data_formats,
+            false AS consent_required,
+            false AS baa_required,
+            NULL::timestamp with time zone AS last_sync_at,
+            p.signed_at,
+            p.launched_at,
+            p.status_notes,
+            NULL::text AS integration_notes,
+            ps.clinical_use,
+            array_remove(ARRAY[p.partnership_type, p.priority, ps.service_type,
+                CASE
+                    WHEN COALESCE(ps.patient_facing, false) THEN 'patient_facing'::text
+                    ELSE NULL::text
+                END], NULL::text) AS card_labels,
+            jsonb_build_object('partnership_metadata', p.metadata, 'service_metadata', COALESCE(ps.metadata, '{}'::jsonb), 'integration_metadata', '{}'::jsonb) AS metadata,
+            LEAST(p.created_at, COALESCE(ps.created_at, p.created_at)) AS created_at,
+            GREATEST(p.updated_at, COALESCE(ps.updated_at, p.updated_at)) AS updated_at
+           FROM (((public.partnerships p
+             JOIN public.organizations o ON ((o.id = p.organization_id)))
+             LEFT JOIN public.partnership_services ps ON (((ps.partnership_id = p.id) AND (ps.archived_at IS NULL))))
+             LEFT JOIN public.people owner ON ((owner.id = p.owner_person_id)))
+          WHERE ((p.archived_at IS NULL) AND (o.archived_at IS NULL) AND (NOT (EXISTS ( SELECT 1
+                   FROM public.partnership_integrations pi
+                  WHERE ((pi.partnership_id = p.id) AND (pi.archived_at IS NULL))))))
+        )
+ SELECT integration_cards.card_id,
+    integration_cards.card_kind,
+    integration_cards.lane_id,
+    integration_cards.lane_name,
+    integration_cards.lane_order,
+    integration_cards.card_title,
+    integration_cards.card_subtitle,
+    integration_cards.organization_id,
+    integration_cards.organization_name,
+    integration_cards.organization_slug,
+    integration_cards.organization_domain,
+    integration_cards.partnership_id,
+    integration_cards.partnership_name,
+    integration_cards.partnership_type,
+    integration_cards.partnership_stage,
+    integration_cards.partnership_stage_order,
+    integration_cards.priority,
+    integration_cards.priority_order,
+    integration_cards.owner_person_id,
+    integration_cards.owner_name,
+    integration_cards.service_id,
+    integration_cards.service_name,
+    integration_cards.service_type,
+    integration_cards.service_status,
+    integration_cards.service_status_order,
+    integration_cards.patient_facing,
+    integration_cards.integration_id,
+    integration_cards.integration_type,
+    integration_cards.integration_status,
+    integration_cards.integration_status_order,
+    integration_cards.sync_direction,
+    integration_cards.data_formats,
+    integration_cards.consent_required,
+    integration_cards.baa_required,
+    integration_cards.last_sync_at,
+    integration_cards.signed_at,
+    integration_cards.launched_at,
+    integration_cards.status_notes,
+    integration_cards.integration_notes,
+    integration_cards.clinical_use,
+    integration_cards.card_labels,
+    integration_cards.metadata,
+    integration_cards.created_at,
+    integration_cards.updated_at
+   FROM integration_cards
+UNION ALL
+ SELECT unmapped_cards.card_id,
+    unmapped_cards.card_kind,
+    unmapped_cards.lane_id,
+    unmapped_cards.lane_name,
+    unmapped_cards.lane_order,
+    unmapped_cards.card_title,
+    unmapped_cards.card_subtitle,
+    unmapped_cards.organization_id,
+    unmapped_cards.organization_name,
+    unmapped_cards.organization_slug,
+    unmapped_cards.organization_domain,
+    unmapped_cards.partnership_id,
+    unmapped_cards.partnership_name,
+    unmapped_cards.partnership_type,
+    unmapped_cards.partnership_stage,
+    unmapped_cards.partnership_stage_order,
+    unmapped_cards.priority,
+    unmapped_cards.priority_order,
+    unmapped_cards.owner_person_id,
+    unmapped_cards.owner_name,
+    unmapped_cards.service_id,
+    unmapped_cards.service_name,
+    unmapped_cards.service_type,
+    unmapped_cards.service_status,
+    unmapped_cards.service_status_order,
+    unmapped_cards.patient_facing,
+    unmapped_cards.integration_id,
+    unmapped_cards.integration_type,
+    unmapped_cards.integration_status,
+    unmapped_cards.integration_status_order,
+    unmapped_cards.sync_direction,
+    unmapped_cards.data_formats,
+    unmapped_cards.consent_required,
+    unmapped_cards.baa_required,
+    unmapped_cards.last_sync_at,
+    unmapped_cards.signed_at,
+    unmapped_cards.launched_at,
+    unmapped_cards.status_notes,
+    unmapped_cards.integration_notes,
+    unmapped_cards.clinical_use,
+    unmapped_cards.card_labels,
+    unmapped_cards.metadata,
+    unmapped_cards.created_at,
+    unmapped_cards.updated_at
+   FROM unmapped_cards;
+
+
+--
+-- Name: VIEW partner_integration_board; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.partner_integration_board IS 'Kanban-oriented partner integration board. One card per active integration, plus unmapped active partnerships/services without an integration row.';
+
+
+--
+-- Name: COLUMN partner_integration_board.card_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.partner_integration_board.card_id IS 'Stable display ID for the board card, prefixed by the source row kind.';
+
+
+--
+-- Name: COLUMN partner_integration_board.card_kind; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.partner_integration_board.card_kind IS 'Card source type: integration, service, or partnership.';
+
+
+--
+-- Name: COLUMN partner_integration_board.lane_id; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.partner_integration_board.lane_id IS 'Kanban lane key, usually the integration status; unmapped means no active integration row exists yet.';
+
+
+--
+-- Name: COLUMN partner_integration_board.lane_order; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.partner_integration_board.lane_order IS 'Numeric lane order for board rendering.';
+
+
+--
+-- Name: COLUMN partner_integration_board.card_labels; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.partner_integration_board.card_labels IS 'Small derived labels suitable for compact card badges.';
+
+
+--
+-- Name: COLUMN partner_integration_board.metadata; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.partner_integration_board.metadata IS 'Combined partnership, service, and integration metadata for drill-down views.';
+
+
+--
+-- Name: partnership_documents; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.partnership_documents (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    partnership_id uuid NOT NULL,
+    document_id uuid NOT NULL,
+    role text DEFAULT 'related'::text NOT NULL,
+    notes text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: partnership_interactions; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.partnership_interactions (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    partnership_id uuid NOT NULL,
+    interaction_id uuid NOT NULL,
+    role text DEFAULT 'related'::text NOT NULL,
+    notes text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: partnership_people; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.partnership_people (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    partnership_id uuid NOT NULL,
+    person_id uuid NOT NULL,
+    role text NOT NULL,
+    notes text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
