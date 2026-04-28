@@ -63,7 +63,7 @@ src/                TypeScript source for the CLI
 migrations/         SQL migrations applied in timestamp order
 templates/          Migration template (`-- Up Migration` / `-- Down Migration`)
 docs/internal-db/   plan / status / schema / ai-ingestion / final-report
-skills/             local AI skill for safe CRM database operations
+skills/             self-contained local AI skill for safe CRM operations
 ```
 
 ## Migrations
@@ -193,14 +193,13 @@ search, chunk-level full-text search, or both.
 
 ## Local AI skill
 
-This repo includes reusable local skills under [`skills/`](skills/):
+This repo includes one reusable, self-contained local skill under
+[`skills/`](skills/):
 
-- [`skills/picardo-internal-db`](skills/picardo-internal-db) contains schema
-  references, ingestion workflows, and a `psql` helper for agents that need to
-  sync transcripts, conversations, documents, notes, and extracted facts.
-- [`skills/picardo-db-search`](skills/picardo-db-search) contains a read-only
-  hybrid search workflow that combines Postgres full-text search with local
-  EmbeddingGemma semantic search through MLX.
+- [`skills/picardo-internal-db`](skills/picardo-internal-db) bundles the
+  current schema snapshot, human-readable schema reference, ingestion contract,
+  sync workflows, and a `psql` helper for safely searching and syncing
+  transcripts, conversations, documents, notes, tasks, and extracted facts.
 
 Live database credentials are not committed. To enable the helper, copy
 `skills/picardo-internal-db/references/credentials.env.example` to

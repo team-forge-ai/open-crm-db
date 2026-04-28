@@ -1,16 +1,16 @@
 ---
 name: picardo-internal-db
-description: Operate Picardo's remote Neon Postgres headless CRM. Use when Codex needs to inspect or edit the Picardo internal database, sync conversations, calls, transcripts, meetings, emails, AI notes, extracted facts, people, organizations, affiliations, tags, relationship edges, or run CRM SQL against the live remote database.
+description: Operate Picardo's remote Neon Postgres headless CRM. Use when Codex needs to inspect, search, or edit the Picardo internal database; sync conversations, calls, transcripts, meetings, emails, documents, tasks, AI notes, extracted facts, people, organizations, partnerships, tags, or relationship edges; or run CRM SQL against the live remote database.
 ---
 
 # Picardo Internal DB
 
 ## Overview
 
-Use this skill to work with Picardo's live remote Postgres CRM. The skill
-includes schema references, ingestion rules, and helper scripts for database
-access. Live credentials are intentionally local-only: set `DATABASE_URL` in
-the environment or create `references/credentials.env` from
+Use this skill to work with Picardo's live remote Postgres CRM. It is
+self-contained so it can be copied or aliased into `~/.agents/skills` without
+repo-relative references. Live credentials are intentionally local-only: set
+`DATABASE_URL` in the environment or create `references/credentials.env` from
 `references/credentials.env.example`.
 
 Treat the database as live production-like data. Make reads freely when useful;
@@ -20,17 +20,16 @@ make writes only when the user asks for data changes or sync work.
 
 - `references/credentials.env.example`: template for local-only `DATABASE_URL`.
 - `references/credentials.env`: optional ignored local credential file. Do not print it.
+- `references/schema.sql`: exact schema snapshot for the migrated database.
 - `references/schema.md`: human-readable entity model.
-- `references/initial-schema.sql`: exact initial DDL, constraints, indexes, enums.
-- `references/add-documents.sql`: document-support migration DDL.
-- `references/add-partnerships*.sql`: partnership operating-layer migration DDL.
 - `references/ai-ingestion.md`: identity, dedupe, idempotency, privacy rules.
 - `references/sync-workflows.md`: SQL patterns for syncing interactions and transcripts.
 - `scripts/psql.sh`: loads credentials and runs `psql` against Neon.
 
-Read `schema.md` and `ai-ingestion.md` before writing data. Read
-`sync-workflows.md` before syncing documents, conversations, transcripts,
-notes, or facts.
+Read `references/schema.md` and `references/ai-ingestion.md` before writing
+data. Use `references/schema.sql` when you need exact columns, constraints,
+indexes, views, or SQL helper functions. Read `references/sync-workflows.md`
+before syncing documents, conversations, transcripts, notes, or facts.
 
 ## Database Access
 
@@ -80,6 +79,18 @@ select name, run_on from public.pgmigrations order by id;
 select count(*) from interactions;
 select count(*) from call_transcripts;
 ```
+
+## Search
+
+Use read-only SQL through `scripts/psql.sh` for CRM search. Prefer
+`search_crm_full_text` for names, emails, product terms, and quoted phrases.
+Use `match_full_text_embeddings` or `match_semantic_embeddings` for chunk-level
+retrieval after embeddings have been backfilled. Return IDs, target types,
+titles, scores, and short excerpts; summarize sensitive matches instead of
+dumping transcripts or full AI notes.
+
+Supported search target types are documented in `references/schema.md` and
+defined exactly in `references/schema.sql`.
 
 ## Sync Workflow
 

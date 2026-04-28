@@ -1,7 +1,6 @@
-# Picardo Internal DB — Status
+# Picardo Internal DB - Status
 
-Live status notes during the initial build. Replaced by `final-report.md` once
-the repo is shipped.
+Current project status and verification notes.
 
 ## Current phase
 
@@ -14,17 +13,18 @@ the repo is shipped.
 
 None blocking. Noted in `final-report.md`.
 
-## Verification log (2026-04-27)
+## Verification log (2026-04-28)
 
 - `pnpm install` — clean
 - `pnpm typecheck` — pass
 - `pnpm lint` — pass
-- `pnpm test` — 19 tests, 3 files, all pass
+- `pnpm test` — 27 tests, 5 files, all pass
 - `pnpm build` — emits `dist/`
 - `node dist/cli.js --help` / `info` — usage rendered
+- Local skill — single self-contained `picardo-internal-db` skill with bundled schema/docs
 - End-to-end against `picardo_internal_db_verify` Postgres:
-  - `migrate status` (empty DB) -> 1 pending
-  - `migrate up` -> 16 tables, 6 seeded sources
-  - `migrate down` -> tables dropped, 1 pending again
+  - `migrate status` (empty DB) -> pending migrations
+  - `migrate up` -> current schema with CRM, partnership, search, embedding, and task tables
+  - `migrate down` -> most recent migration reverts cleanly
   - `migrate create "Add example feature"` -> file scaffolded
 - Test DB and scratch migration file cleaned up before commit.

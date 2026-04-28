@@ -127,7 +127,7 @@ assignee fields.
 
 1. Resolve / create the participating people and organizations.
 2. Insert into `interactions` with `(type, direction, occurred_at, source_id,
-   source_external_id)`. Treat the unique index as your idempotency contract.
+source_external_id)`. Treat the unique index as your idempotency contract.
 3. For each participant, insert into `interaction_participants` with the
    appropriate `participant_role`. Set exactly one of `person_id` /
    `organization_id`.
@@ -184,14 +184,14 @@ actual call, meeting, email, message, note event, or similar interaction.
 
 - **`ai_notes`** are narrative artifacts (summaries, coaching notes, action
   items). They are paragraphs of prose and are anchored to one interaction, one
-  document, *or* one entity. They are not the place for structured facts.
+  document, _or_ one entity. They are not the place for structured facts.
 - **`extracted_facts`** are structured key/value statements. They are append
   only — to "update" a fact, insert a new row with a newer `observed_at`.
   Readers pick the latest by `(subject_type, subject_id, key)` ordered by
   `observed_at DESC`.
 
 If a model returns both a narrative summary and a list of structured facts,
-write *both*: the summary into `ai_notes`, each fact into `extracted_facts`.
+write _both_: the summary into `ai_notes`, each fact into `extracted_facts`.
 For facts extracted from a document, set `extracted_facts.document_id` for
 provenance.
 

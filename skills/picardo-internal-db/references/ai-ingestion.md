@@ -6,12 +6,13 @@ headless CRM safely. It pairs with `schema.md`.
 ## Purpose
 
 The Picardo Internal DB is the single source of truth for **every interaction
-the company has with another company or person** and for durable company
-knowledge artifacts: calls, meetings, emails, messages, internal notes, memos,
-research notes, meeting-note documents, strategy documents, and the
-notes/summaries derived from them. An AI agent is expected to keep this
-database fresh by ingesting from upstream sources (Gmail, Google Calendar,
-Zoom, Google Meet, manual notes, repo docs, etc.) and writing structured rows.
+the company has with another company or person**, durable company knowledge
+artifacts, and internal operating tasks: calls, meetings, emails, messages,
+internal notes, memos, research notes, meeting-note documents, strategy
+documents, tasks, comments, and the notes/summaries derived from them. An AI
+agent is expected to keep this database fresh by ingesting from upstream
+sources (Gmail, Google Calendar, Zoom, Google Meet, Linear, manual notes, repo
+docs, etc.) and writing structured rows.
 
 The schema is normalized: organizations, people, affiliations, interactions,
 participants, transcripts, documents, document links, AI notes, extracted
@@ -45,6 +46,7 @@ Seeded slugs (safe to assume present):
 - `google_calendar`
 - `google_meet`
 - `zoom`
+- `linear`
 
 If you ingest from a source that isn't in the table yet, insert it first with
 `INSERT ... ON CONFLICT (slug) DO NOTHING` and a meaningful `name` and
@@ -62,6 +64,10 @@ match**. In order of preference:
 
 If you create a new entity, immediately record the originating external ID in
 `external_identities` so the next ingestion run finds it.
+
+Internal Picardo operators are **not** CRM `people`. Use `team_members` for
+task creators, assignees, delegates, project leads, and comment authors. Use
+`people` only for external contacts and counterparties.
 
 ### Upsert pattern
 
@@ -84,11 +90,44 @@ For `interactions`, `call_transcripts`, and `documents`, the unique index
 external ID exists. Re-ingesting the same Gmail message, Zoom transcript, or
 repo document should produce zero duplicate rows.
 
+For task imports, use the source-backed unique indexes on `team_members`,
+`task_teams`, `task_statuses`, `task_projects`, `tasks`, `task_comments`, and
+`task_attachments`. For Linear issues, store the human-readable identifier
+(`PIC-226`) in `tasks.source_identifier` and the upstream stable ID in
+`tasks.source_external_id` when the source exposes it.
+
+## Recording a task
+
+Use `tasks` for internal operating work such as imported Linear issues.
+Run `pnpm import:linear` to inventory Linear without writes, and
+`pnpm import:linear --apply` to write the import idempotently.
+
+1. Resolve / create the source in `sources` (`linear` for Linear imports).
+2. Resolve / create team members in `team_members` by
+   `(source_id, source_external_id)` or by `email`.
+3. Upsert the team in `task_teams`.
+4. Upsert workflow states in `task_statuses`; statuses are team-scoped rows,
+   not enums.
+5. Upsert the project in `task_projects` when present, and link it to the team
+   through `task_project_teams`.
+6. Upsert the task in `tasks` with title, description, status, priority,
+   project, creator, assignee, due date, lifecycle timestamps, source URL, and
+   source identifiers.
+7. Insert Linear labels as `tags` and attach them to `tasks` through
+   `taggings` with `target_type = 'task'`.
+8. Upsert comments into `task_comments`, attachments/link metadata into
+   `task_attachments`, and task relationships into `task_relations`.
+
+Do not link task assignees or creators to CRM `people`; use `team_members`.
+If a task mentions an external contact or organization, link that later through
+a dedicated task-to-CRM relationship migration rather than overloading
+assignee fields.
+
 ## Recording an interaction
 
 1. Resolve / create the participating people and organizations.
 2. Insert into `interactions` with `(type, direction, occurred_at, source_id,
-   source_external_id)`. Treat the unique index as your idempotency contract.
+source_external_id)`. Treat the unique index as your idempotency contract.
 3. For each participant, insert into `interaction_participants` with the
    appropriate `participant_role`. Set exactly one of `person_id` /
    `organization_id`.
@@ -145,14 +184,14 @@ actual call, meeting, email, message, note event, or similar interaction.
 
 - **`ai_notes`** are narrative artifacts (summaries, coaching notes, action
   items). They are paragraphs of prose and are anchored to one interaction, one
-  document, *or* one entity. They are not the place for structured facts.
+  document, _or_ one entity. They are not the place for structured facts.
 - **`extracted_facts`** are structured key/value statements. They are append
   only — to "update" a fact, insert a new row with a newer `observed_at`.
   Readers pick the latest by `(subject_type, subject_id, key)` ordered by
   `observed_at DESC`.
 
 If a model returns both a narrative summary and a list of structured facts,
-write *both*: the summary into `ai_notes`, each fact into `extracted_facts`.
+write _both_: the summary into `ai_notes`, each fact into `extracted_facts`.
 For facts extracted from a document, set `extracted_facts.document_id` for
 provenance.
 

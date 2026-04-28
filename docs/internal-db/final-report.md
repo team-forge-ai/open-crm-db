@@ -1,4 +1,4 @@
-# Picardo Internal DB — Final Report
+# Picardo Internal DB - Final Report
 
 ## What shipped
 
@@ -10,12 +10,14 @@ The deliverable matches the brief:
 - **Headless, migration-first.** No web infrastructure, no API server, no
   application code beyond the CLI.
 - **SQL-only migrations.** Files live under `migrations/` and follow the
-  `<unix_ms>_<kebab-name>.sql` convention with `-- Up Migration` / `-- Down
-  Migration` headers, applied via [`node-pg-migrate`](https://www.npmjs.com/package/node-pg-migrate).
-- **Solid initial schema.** Organizations, people, affiliations, contact
-  handles, interactions, participants, raw call transcripts, AI notes,
-  extracted facts, tags, relationship edges, plus a `sources` provenance
-  table seeded with the canonical slugs.
+  `<unix_ms>_<kebab-name>.sql` convention. Each file uses `-- Up Migration`
+  and `-- Down Migration` headers, applied via
+  [`node-pg-migrate`](https://www.npmjs.com/package/node-pg-migrate).
+- **Current schema snapshot.** Organizations, people, affiliations, contact
+  handles, interactions, participants, documents, partnerships, tasks, raw call
+  transcripts, AI notes, extracted facts, semantic embeddings, search helpers,
+  tags, relationship edges, plus a `sources` provenance table seeded with the
+  canonical slugs.
 - **AI ingestion contract.** `docs/internal-db/ai-ingestion.md` describes how
   an AI agent should populate the database: identity & dedupe, idempotency
   keys, transcript handling, AI-notes vs extracted-facts, and privacy.
@@ -29,13 +31,14 @@ src/
   migrations.ts          slugify + parse + list + diff + create helpers
   runner.ts              thin wrapper over node-pg-migrate
   commands/              one file per CLI command
-  __tests__/             vitest unit tests (19 tests)
-migrations/
-  1745764800000_initial-schema.sql
+  __tests__/             vitest unit tests
+migrations/              timestamped SQL migrations
 templates/
   migration.sql
 docs/internal-db/
   plan.md  status.md  schema.md  ai-ingestion.md  final-report.md
+skills/
+  picardo-internal-db/   self-contained DB operations skill
 ```
 
 ## CLI surface
@@ -61,7 +64,7 @@ pnpm install            # 200 packages, no warnings beyond an upstream
                         # `glob@11.0.3` deprecation noted by pnpm
 pnpm typecheck          # PASS
 pnpm lint               # PASS (eslint + typescript-eslint + prettier-config)
-pnpm test               # PASS — 3 files, 19 tests
+pnpm test               # PASS — 5 files, 27 tests
 pnpm build              # PASS — emits dist/
 node dist/cli.js --help # prints usage
 node dist/cli.js info   # prints schema + connection guidance
@@ -72,18 +75,16 @@ End-to-end against a disposable Postgres database (`createdb` / `dropdb`):
 ```sh
 createdb picardo_internal_db_verify
 DATABASE_URL=postgres://localhost/picardo_internal_db_verify \
-  node dist/cli.js migrate status   # 1 pending
+  node dist/cli.js migrate status   # pending migrations
 DATABASE_URL=postgres://localhost/picardo_internal_db_verify \
-  node dist/cli.js migrate up       # applies the initial schema
+  node dist/cli.js migrate up       # applies the current schema
 psql -d picardo_internal_db_verify -c "\dt"
-# 16 tables: affiliations, ai_notes, call_transcripts, external_identities,
-#            extracted_facts, interaction_participants, interactions,
-#            organizations, people, person_emails, person_phones,
-#            pgmigrations, relationship_edges, sources, taggings, tags
+# Current CRM, partnership, search, embedding, and task tables plus
+# pgmigrations.
 psql -d picardo_internal_db_verify -c "SELECT slug FROM sources ORDER BY slug;"
-# ai_extraction, gmail, google_calendar, google_meet, manual, zoom
+# ai_extraction, gmail, google_calendar, google_meet, linear, manual, zoom
 DATABASE_URL=postgres://localhost/picardo_internal_db_verify \
-  node dist/cli.js migrate down     # cleanly reverts the schema
+  node dist/cli.js migrate down     # cleanly reverts the most recent migration
 DATABASE_URL=postgres://localhost/picardo_internal_db_verify \
   node dist/cli.js migrate create "Add example feature"
 # -> migrations/<ts>_add-example-feature.sql
@@ -121,8 +122,8 @@ All of the above ran successfully on the build host (Postgres 16.13, Node
   `pnpm typecheck`, `pnpm lint`, `pnpm test`, `pnpm build`. Tests that need
   a real DB are gated behind `PICARDO_DB_TEST_URL` (currently none — the
   initial migration is exercised manually via the steps above).
-- No seed-data fixtures beyond the `sources` lookup. AI ingestion is the
-  intended population path, not seed scripts.
+- No seed-data fixtures beyond lookup rows such as `sources`. AI ingestion and
+  source imports are the intended population path, not seed scripts.
 - No Kysely / type-generated DB types. Out of scope for a migration-only
   CLI; downstream consumers can run `kysely-codegen` against the migrated
   schema if/when they want typed clients.
@@ -130,5 +131,4 @@ All of the above ran successfully on the build host (Postgres 16.13, Node
 ## Repo state
 
 - Branch: `main`
-- Initial commit recorded with the full project.
-- GitHub remote: `team-forge-ai/picardo-internal-db` (private), pushed.
+- GitHub remote: `team-forge-ai/picardo-internal-db` (private).

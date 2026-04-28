@@ -1,8 +1,7 @@
 # Picardo Internal DB — Schema Reference
 
-Entity-level reference for the headless-CRM schema. Mirrors the initial
-migration `migrations/<ts>_initial-schema.sql`. When the migration changes,
-update this file in the same PR.
+Entity-level reference for the headless-CRM schema. Keep this file aligned with
+the generated `schema.sql` snapshot and the SQL migrations that produce it.
 
 ## Conventions
 
@@ -360,9 +359,9 @@ Use the same embedding model for indexing and querying.
 `search_crm_full_text(search_query, match_count, filter_target_types)` performs
 ranked keyword search across active CRM source records: organizations, people,
 interactions, call transcripts, documents, AI notes, extracted facts,
-organization research profiles, partnerships, services, integrations, internal
-users, task projects, tasks, and task comments. Results include a type/id pair,
-title, subtitle, timestamp, rank, headline, and metadata.
+organization research profiles, partnerships, services, integrations, team
+members, task projects, tasks, and task comments. Results include a type/id
+pair, title, subtitle, timestamp, rank, headline, and metadata.
 
 `match_full_text_embeddings(search_query, match_count, filter_target_types)`
 performs ranked keyword search over active `semantic_embeddings.content` chunks
