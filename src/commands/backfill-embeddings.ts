@@ -62,6 +62,10 @@ const TARGET_TYPES = [
   'call_transcript',
   'ai_note',
   'extracted_fact',
+  'internal_user',
+  'task_project',
+  'task',
+  'task_comment',
 ] as const
 
 type TargetType = (typeof TARGET_TYPES)[number]
@@ -580,6 +584,92 @@ async function fetchSourceCandidates(
             'Source excerpt: ' || ef.source_excerpt
           )
         from extracted_facts ef
+
+        union all
+
+        select
+          'internal_user'::text,
+          iu.id,
+          iu.name,
+          iu.updated_at,
+          concat_ws(E'\\n',
+            'Internal user: ' || iu.name,
+            'Title: ' || iu.title,
+            'Email: ' || iu.email::text,
+            'Bot: ' || iu.is_bot::text
+          )
+        from internal_users iu
+        where iu.archived_at is null
+
+        union all
+
+        select
+          'task_project'::text,
+          tp.id,
+          tp.name,
+          tp.updated_at,
+          concat_ws(E'\\n',
+            'Task project: ' || tp.name,
+            'Summary: ' || tp.summary,
+            'Description: ' || tp.description,
+            'Status: ' || concat_ws(' / ', tp.status_name, tp.status_type),
+            'Priority: ' || concat_ws(' / ', tp.priority_label, tp.priority_value::text),
+            'Start date: ' || tp.start_date::text,
+            'Target date: ' || tp.target_date::text,
+            'Source URL: ' || tp.source_url
+          )
+        from task_projects tp
+        where tp.archived_at is null
+
+        union all
+
+        select
+          'task'::text,
+          t.id,
+          coalesce(t.source_identifier || ': ' || t.title, t.title),
+          t.updated_at,
+          concat_ws(E'\\n',
+            'Task: ' || coalesce(t.source_identifier || ': ' || t.title, t.title),
+            'Project: ' || tp.name,
+            'Team: ' || tt.name,
+            'Status: ' || ts.name,
+            'Status type: ' || ts.status_type,
+            'Assignee: ' || assignee.name,
+            'Creator: ' || creator.name,
+            'Priority: ' || concat_ws(' / ', t.priority_label, t.priority_value::text),
+            'Due date: ' || t.due_date::text,
+            'Started at: ' || t.started_at::text,
+            'Completed at: ' || t.completed_at::text,
+            'Canceled at: ' || t.canceled_at::text,
+            'Source URL: ' || t.source_url,
+            'Git branch: ' || t.git_branch_name,
+            'Description: ' || t.description
+          )
+        from tasks t
+        left join task_projects tp on tp.id = t.project_id
+        left join task_teams tt on tt.id = t.team_id
+        left join task_statuses ts on ts.id = t.status_id
+        left join internal_users assignee on assignee.id = t.assignee_user_id
+        left join internal_users creator on creator.id = t.creator_user_id
+        where t.archived_at is null
+
+        union all
+
+        select
+          'task_comment'::text,
+          tc.id,
+          coalesce(t.source_identifier || ' comment', 'Task comment'),
+          tc.updated_at,
+          concat_ws(E'\\n',
+            'Task comment on: ' || coalesce(t.source_identifier || ': ' || t.title, t.title),
+            'Author: ' || iu.name,
+            'Created at: ' || tc.source_created_at::text,
+            'Comment: ' || tc.body
+          )
+        from task_comments tc
+        join tasks t on t.id = tc.task_id
+        left join internal_users iu on iu.id = tc.author_user_id
+        where tc.archived_at is null
       )
       select
         target_type::text as target_type,

@@ -6,7 +6,13 @@ describe('buildProgram', () => {
     const program = buildProgram()
     const top = program.commands.map((c) => c.name())
     expect(top).toEqual(
-      expect.arrayContaining(['migrate', 'embeddings', 'info', 'enrich']),
+      expect.arrayContaining([
+        'migrate',
+        'embeddings',
+        'linear',
+        'info',
+        'enrich',
+      ]),
     )
 
     const migrate = program.commands.find((c) => c.name() === 'migrate')!
@@ -18,6 +24,10 @@ describe('buildProgram', () => {
     const embeddings = program.commands.find((c) => c.name() === 'embeddings')!
     const embeddingSub = embeddings.commands.map((c) => c.name())
     expect(embeddingSub).toEqual(expect.arrayContaining(['backfill']))
+
+    const linear = program.commands.find((c) => c.name() === 'linear')!
+    const linearSub = linear.commands.map((c) => c.name())
+    expect(linearSub).toEqual(expect.arrayContaining(['import']))
   })
 
   it('emits help text that mentions the binary name', () => {
@@ -26,6 +36,7 @@ describe('buildProgram', () => {
     expect(help).toContain('picardo-db')
     expect(help).toContain('migrate')
     expect(help).toContain('embeddings')
+    expect(help).toContain('linear')
     expect(help).toContain('info')
     expect(help).toContain('enrich')
   })

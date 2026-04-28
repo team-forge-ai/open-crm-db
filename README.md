@@ -42,6 +42,8 @@ pnpm picardo-db embeddings backfill        # dry-run local semantic embedding ba
 pnpm picardo-db embeddings backfill --apply # write local MLX embeddings
 pnpm enrich:crm --limit 5                 # dry-run public CRM enrichment
 pnpm enrich:crm --apply --limit 5         # write enrichment facts/notes
+pnpm import:linear                        # dry-run Linear task import
+pnpm import:linear --apply                # import Linear tasks into Postgres
 ```
 
 After `pnpm build`, the same CLI is available as `picardo-db` (via the `bin`
@@ -120,6 +122,8 @@ Top-level entities:
 - `documents`, `document_people`, `document_organizations`, `document_interactions`
 - `partnerships`, `partnership_people`, `partnership_interactions`, `partnership_documents`
 - `partnership_services`, `partnership_integrations`
+- `internal_users`, `task_teams`, `task_statuses`, `task_projects`, `tasks`
+- `task_comments`, `task_attachments`, `task_relations`
 - `call_transcripts`, `ai_notes`, `extracted_facts`
 - `semantic_embeddings`
 - `tags` / `taggings`, `relationship_edges`

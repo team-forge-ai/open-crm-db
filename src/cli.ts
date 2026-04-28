@@ -10,6 +10,10 @@ import {
   backfillEmbeddings,
   type BackfillEmbeddingsOptions,
 } from './commands/backfill-embeddings.js'
+import {
+  importLinear,
+  type ImportLinearOptions,
+} from './commands/import-linear.js'
 
 export function buildProgram(): Command {
   const program = new Command()
@@ -168,6 +172,52 @@ export function buildProgram(): Command {
     )
     .action(async (opts: EnrichOptions) => {
       await enrich(validateEnrichOptions(opts))
+    })
+
+  const linear = program
+    .command('linear')
+    .description('Import task-management data from Linear.')
+
+  linear
+    .command('import')
+    .description(
+      'Import Linear users, teams, statuses, labels, projects, issues, comments, attachments, and relations.',
+    )
+    .option(
+      '--apply',
+      'Write imported records. Defaults to dry-run inventory only.',
+    )
+    .option(
+      '--concurrency <n>',
+      'Maximum concurrent Linear MCP detail requests.',
+      (v) => Number.parseInt(v, 10),
+    )
+    .option(
+      '--credentials-env-path <path>',
+      'Path to a local env file containing DATABASE_URL.',
+    )
+    .option(
+      '--exclude-archived',
+      'Do not ask Linear for archived issues/teams.',
+    )
+    .option(
+      '--limit <n>',
+      'Maximum Linear issues to inspect/import.',
+      (v) => Number.parseInt(v, 10),
+    )
+    .option(
+      '--mcp-url <url>',
+      'Linear MCP endpoint.',
+      'https://mcp.linear.app/mcp',
+    )
+    .option('--skip-comments', 'Skip importing Linear comments.')
+    .option('--skip-relations', 'Skip importing Linear issue relations.')
+    .option('--verbose', 'Print Linear MCP progress and proxy logs.')
+    .action(async (opts: ImportLinearOptions & { excludeArchived?: boolean }) => {
+      await importLinear({
+        ...opts,
+        includeArchived: opts.excludeArchived ? false : undefined,
+      })
     })
 
   return program

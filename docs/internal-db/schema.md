@@ -34,6 +34,20 @@ update this file in the same PR.
 
 ## Core entities
 
+### `internal_users`
+
+Picardo operators and system actors, such as Alex, Alana, and imported bot
+actors. This table is intentionally separate from `people`: `people` is for
+external CRM contacts and counterparties, while `internal_users` is for owners,
+assignees, creators, project leads, and comment authors inside Picardo's
+operating layer.
+
+Required identity fields are `name` and `email`; `title` is optional.
+`email` is `citext` and unique. For imported systems, use `source_id` plus
+`source_external_id` as the idempotency key, and keep provider-specific fields
+such as avatar URLs, active flags, or bot flags in first-class columns where
+available or `metadata` when not.
+
 ### `organizations`
 
 Companies, institutions, counterparties. Identified by `name` plus optional
@@ -184,6 +198,77 @@ patient data.
 or a proprietary API schema. `consent_required` and `baa_required` record
 high-level compliance gating without replacing legal review.
 
+## Tasks
+
+Task management is modeled as an internal operating layer. It imports Linear
+faithfully where the model is useful, while avoiding unused Linear constructs
+until Picardo actually needs them.
+
+### `task_teams`
+
+Work containers for task workflows. Linear teams map here. `key` stores the
+short task prefix such as `PIC`, while `name` stores the display name such as
+`Picardo`. Teams are source-backed so imports can upsert by
+`(source_id, source_external_id)`.
+
+### `task_statuses`
+
+Team-scoped workflow states such as `Backlog`, `Todo`, `In Progress`,
+`In Review`, `Done`, `Canceled`, and `Duplicate`.
+
+`status_type` stores the normalized Linear category: `backlog`, `unstarted`,
+`started`, `completed`, or `canceled`. Keep statuses as rows, not enums,
+because workflows are team-specific and may evolve independently.
+
+### `task_projects`
+
+Operating project containers such as `Product`, `Marketing & Launch`,
+`Strategy`, `HIPAA Compliance`, `Operations`, `Partnerships`,
+`Corporate & Legal Setup`, `GTM - Healthshare / Enterprise`, and `Payments`.
+
+Projects store status, priority, start/target dates, lifecycle timestamps, a
+lead internal user, source URL, and metadata. Linear milestones and cycles are
+not modeled yet because Picardo's current Linear workspace does not use them.
+
+### `task_project_teams`
+
+Join table between task projects and task teams. Picardo currently has one
+Linear team, but Linear projects can belong to multiple teams, so the schema
+keeps that relationship normalized.
+
+### `tasks`
+
+Imported Linear issues and future Picardo-owned operational work. Core fields
+include team, status, project, parent task, creator, assignee, delegate, title,
+description, priority, estimate, due date, lifecycle timestamps, source
+timestamps, Linear identifier, source URL, git branch name, SLA fields, and
+metadata.
+
+`source_external_id` is the upstream stable ID when available.
+`source_identifier` stores human-readable identifiers such as `PIC-226`, and
+`source_number` stores the numeric issue number. Internal users, not CRM
+`people`, own creator/assignee/delegate relationships.
+
+### `task_comments`
+
+Threaded task comments in Markdown or plain text. Comments link to
+`internal_users` for authors and preserve source IDs plus source-created /
+source-updated timestamps for idempotent imports. Use this table for imported
+Linear comments rather than storing comment bodies inside `tasks.metadata`.
+
+### `task_attachments`
+
+Task attachment and external-link metadata. The table preserves titles, URLs,
+content types, source IDs, and provider-specific metadata. Binary attachment
+contents are not downloaded into Postgres by default.
+
+### `task_relations`
+
+Directed relationships between tasks. `relation_type` is one of `blocks`,
+`blocked_by`, `related`, or `duplicate`. Imports may either store Linear's
+reported direction directly or normalize `blocked_by` into a reverse `blocks`
+edge, but should be consistent within a source import.
+
 ## Interactions
 
 ### `interactions`
@@ -238,8 +323,9 @@ Chunk-level semantic search index for CRM content. Each row stores the source
 text chunk, a SHA-256 content hash, model metadata, and a `vector(768)`
 embedding. `target_type` / `target_id` points back to the CRM record being
 indexed, such as an organization, person, document, interaction,
-call transcript, AI note, extracted fact, partnership, service, integration, or
-organization research profile.
+call transcript, AI note, extracted fact, partnership, service, integration,
+organization research profile, internal user, task project, task, or task
+comment.
 
 Only one active embedding is allowed per `(target, provider, model, version,
 chunk_index)`. Re-embedding changed content should update the active row or
@@ -256,9 +342,9 @@ Use the same embedding model for indexing and querying.
 `search_crm_full_text(search_query, match_count, filter_target_types)` performs
 ranked keyword search across active CRM source records: organizations, people,
 interactions, call transcripts, documents, AI notes, extracted facts,
-organization research profiles, partnerships, services, and integrations.
-Results include a type/id pair, title, subtitle, timestamp, rank, headline, and
-metadata.
+organization research profiles, partnerships, services, integrations, internal
+users, task projects, tasks, and task comments. Results include a type/id pair,
+title, subtitle, timestamp, rank, headline, and metadata.
 
 `match_full_text_embeddings(search_query, match_count, filter_target_types)`
 performs ranked keyword search over active `semantic_embeddings.content` chunks
@@ -275,8 +361,12 @@ coverage should come from chunking content into `semantic_embeddings`.
 ### `tags` / `taggings`
 
 `tags` are global (unique by `slug`). `taggings` is polymorphic over
-`{organization, person, interaction, document, partnership}` with a CHECK
-constraint, and `(tag_id, target_type, target_id)` is unique.
+`{organization, person, interaction, document, partnership, task}` with a
+CHECK constraint, and `(tag_id, target_type, target_id)` is unique.
+
+Linear issue labels attach to `tasks` using existing `tags` / `taggings`.
+Store Linear label color in `tags.color` and label description in
+`tags.description`.
 
 ### `relationship_edges`
 

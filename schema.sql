@@ -261,6 +261,162 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     SELECT websearch_to_tsquery('english', COALESCE(search_query, '')) AS tsq
   ),
   ranked AS (
+    SELECT *
+    FROM search_crm_full_text_base(search_query, 100, filter_target_types)
+
+    UNION ALL
+
+    SELECT
+      'internal_user'::text AS target_type,
+      iu.id AS target_id,
+      iu.name AS title,
+      concat_ws(' / ', iu.title, iu.email::text) AS subtitle,
+      iu.updated_at AS occurred_at,
+      ts_rank_cd(
+        to_tsvector('english', picardo_search_text(iu.name, iu.title, iu.email::text)),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', iu.name, iu.title, iu.email::text),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      iu.metadata AS metadata
+    FROM internal_users iu
+    CROSS JOIN query
+    WHERE iu.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'internal_user' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(iu.name, iu.title, iu.email::text)) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'task_project'::text AS target_type,
+      tp.id AS target_id,
+      tp.name AS title,
+      concat_ws(' / ', tp.status_name, tp.priority_label, tp.target_date::text) AS subtitle,
+      COALESCE(tp.completed_at, tp.canceled_at, tp.started_at, tp.updated_at) AS occurred_at,
+      ts_rank_cd(
+        to_tsvector('english', picardo_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      tp.metadata AS metadata
+    FROM task_projects tp
+    CROSS JOIN query
+    WHERE tp.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'task_project' = ANY(filter_target_types))
+      AND to_tsvector('english', picardo_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'task'::text AS target_type,
+      t.id AS target_id,
+      COALESCE(t.source_identifier || ': ' || t.title, t.title) AS title,
+      concat_ws(
+        ' / ',
+        tp.name,
+        ts.name,
+        assignee.name,
+        t.priority_label,
+        t.due_date::text
+      ) AS subtitle,
+      COALESCE(t.completed_at, t.canceled_at, t.started_at, t.source_updated_at, t.updated_at) AS occurred_at,
+      ts_rank_cd(
+        to_tsvector(
+          'english',
+          picardo_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
+        ),
+        query.tsq,
+        32
+      ) AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', t.source_identifier, t.title, left(t.description, 250000), tp.name, ts.name, assignee.name),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      t.metadata || jsonb_build_object(
+        'source_identifier', t.source_identifier,
+        'source_url', t.source_url,
+        'project_id', t.project_id,
+        'status_id', t.status_id,
+        'assignee_user_id', t.assignee_user_id
+      ) AS metadata
+    FROM tasks t
+    LEFT JOIN task_projects tp ON tp.id = t.project_id
+    LEFT JOIN task_statuses ts ON ts.id = t.status_id
+    LEFT JOIN internal_users assignee ON assignee.id = t.assignee_user_id
+    CROSS JOIN query
+    WHERE t.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'task' = ANY(filter_target_types))
+      AND to_tsvector(
+        'english',
+        picardo_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
+      ) @@ query.tsq
+
+    UNION ALL
+
+    SELECT
+      'task_comment'::text AS target_type,
+      tc.id AS target_id,
+      COALESCE(t.source_identifier || ' comment', 'Task comment') AS title,
+      concat_ws(' / ', t.title, iu.name) AS subtitle,
+      COALESCE(tc.source_created_at, tc.created_at) AS occurred_at,
+      ts_rank_cd(to_tsvector('english', left(tc.body, 250000)), query.tsq, 32) AS rank,
+      ts_headline(
+        'english',
+        left(tc.body, 250000),
+        query.tsq,
+        'MaxWords=35, MinWords=8, MaxFragments=2'
+      ) AS headline,
+      tc.metadata || jsonb_build_object(
+        'task_id', tc.task_id,
+        'author_user_id', tc.author_user_id
+      ) AS metadata
+    FROM task_comments tc
+    JOIN tasks t ON t.id = tc.task_id
+    LEFT JOIN internal_users iu ON iu.id = tc.author_user_id
+    CROSS JOIN query
+    WHERE tc.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'task_comment' = ANY(filter_target_types))
+      AND to_tsvector('english', left(tc.body, 250000)) @@ query.tsq
+  )
+  SELECT
+    ranked.target_type,
+    ranked.target_id,
+    ranked.title,
+    ranked.subtitle,
+    ranked.occurred_at,
+    ranked.rank,
+    ranked.headline,
+    ranked.metadata
+  FROM ranked
+  ORDER BY ranked.rank DESC, ranked.occurred_at DESC NULLS LAST
+  LIMIT LEAST(GREATEST(COALESCE(match_count, 20), 1), 100);
+$$;
+
+
+--
+-- Name: search_crm_full_text_base(text, integer, text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count integer DEFAULT 20, filter_target_types text[] DEFAULT NULL::text[]) RETURNS TABLE(target_type text, target_id uuid, title text, subtitle text, occurred_at timestamp with time zone, rank real, headline text, metadata jsonb)
+    LANGUAGE sql STABLE
+    AS $$
+  WITH query AS (
+    SELECT websearch_to_tsquery('english', COALESCE(search_query, '')) AS tsq
+  ),
+  ranked AS (
     SELECT
       'organization'::text AS target_type,
       o.id AS target_id,
@@ -827,6 +983,29 @@ CREATE TABLE public.interactions (
 
 
 --
+-- Name: internal_users; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.internal_users (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    title text,
+    email public.citext NOT NULL,
+    avatar_url text,
+    is_active boolean DEFAULT true NOT NULL,
+    is_bot boolean DEFAULT false NOT NULL,
+    source_id uuid,
+    source_external_id text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT internal_users_email_check CHECK ((length(TRIM(BOTH FROM (email)::text)) > 0)),
+    CONSTRAINT internal_users_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+
+--
 -- Name: organization_research_profiles; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -1152,7 +1331,7 @@ CREATE TABLE public.semantic_embeddings (
     CONSTRAINT semantic_embeddings_content_check CHECK ((length(TRIM(BOTH FROM content)) > 0)),
     CONSTRAINT semantic_embeddings_content_sha256_check CHECK ((content_sha256 ~ '^[a-f0-9]{64}$'::text)),
     CONSTRAINT semantic_embeddings_embedding_dimension_check CHECK ((embedding_dimension = 768)),
-    CONSTRAINT semantic_embeddings_target_type_check CHECK ((target_type = ANY (ARRAY['organization'::text, 'organization_research_profile'::text, 'person'::text, 'interaction'::text, 'document'::text, 'partnership'::text, 'partnership_service'::text, 'partnership_integration'::text, 'call_transcript'::text, 'ai_note'::text, 'extracted_fact'::text])))
+    CONSTRAINT semantic_embeddings_target_type_check CHECK ((target_type = ANY (ARRAY['organization'::text, 'organization_research_profile'::text, 'person'::text, 'interaction'::text, 'document'::text, 'partnership'::text, 'partnership_service'::text, 'partnership_integration'::text, 'call_transcript'::text, 'ai_note'::text, 'extracted_fact'::text, 'internal_user'::text, 'task'::text, 'task_project'::text, 'task_comment'::text])))
 );
 
 
@@ -1182,7 +1361,7 @@ CREATE TABLE public.taggings (
     target_id uuid NOT NULL,
     source_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT ck_taggings_target_type CHECK ((target_type = ANY (ARRAY['organization'::text, 'person'::text, 'interaction'::text, 'document'::text, 'partnership'::text])))
+    CONSTRAINT ck_taggings_target_type CHECK ((target_type = ANY (ARRAY['organization'::text, 'person'::text, 'interaction'::text, 'document'::text, 'partnership'::text, 'task'::text])))
 );
 
 
@@ -1198,6 +1377,220 @@ CREATE TABLE public.tags (
     color text,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: task_attachments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_attachments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    task_id uuid NOT NULL,
+    title text,
+    subtitle text,
+    url text,
+    content_type text,
+    source_id uuid,
+    source_external_id text,
+    source_url text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: task_comments; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_comments (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    task_id uuid NOT NULL,
+    parent_comment_id uuid,
+    author_user_id uuid,
+    body text NOT NULL,
+    body_format text DEFAULT 'markdown'::text NOT NULL,
+    source_id uuid,
+    source_external_id text,
+    source_url text,
+    source_created_at timestamp with time zone,
+    source_updated_at timestamp with time zone,
+    edited_at timestamp with time zone,
+    resolved_at timestamp with time zone,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_comments_body_check CHECK ((length(TRIM(BOTH FROM body)) > 0)),
+    CONSTRAINT task_comments_body_format_check CHECK ((body_format = ANY (ARRAY['markdown'::text, 'plain_text'::text, 'other'::text]))),
+    CONSTRAINT task_comments_check CHECK (((parent_comment_id IS NULL) OR (parent_comment_id <> id)))
+);
+
+
+--
+-- Name: task_project_teams; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_project_teams (
+    project_id uuid NOT NULL,
+    team_id uuid NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: task_projects; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_projects (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    summary text,
+    description text,
+    icon text,
+    color text,
+    status_name text,
+    status_type text,
+    priority_value integer DEFAULT 0 NOT NULL,
+    priority_label text,
+    lead_user_id uuid,
+    start_date date,
+    target_date date,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    canceled_at timestamp with time zone,
+    source_id uuid,
+    source_external_id text,
+    source_url text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_projects_check CHECK (((target_date IS NULL) OR (start_date IS NULL) OR (target_date >= start_date))),
+    CONSTRAINT task_projects_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0)),
+    CONSTRAINT task_projects_priority_value_check CHECK (((priority_value >= 0) AND (priority_value <= 4))),
+    CONSTRAINT task_projects_status_type_check CHECK (((status_type IS NULL) OR (status_type = ANY (ARRAY['backlog'::text, 'planned'::text, 'started'::text, 'paused'::text, 'completed'::text, 'canceled'::text]))))
+);
+
+
+--
+-- Name: task_relations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_relations (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    task_id uuid NOT NULL,
+    related_task_id uuid NOT NULL,
+    relation_type text NOT NULL,
+    source_id uuid,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_relations_check CHECK ((task_id <> related_task_id)),
+    CONSTRAINT task_relations_relation_type_check CHECK ((relation_type = ANY (ARRAY['blocks'::text, 'blocked_by'::text, 'related'::text, 'duplicate'::text])))
+);
+
+
+--
+-- Name: task_statuses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_statuses (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    team_id uuid NOT NULL,
+    name text NOT NULL,
+    status_type text NOT NULL,
+    "position" numeric,
+    color text,
+    description text,
+    source_id uuid,
+    source_external_id text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_statuses_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0)),
+    CONSTRAINT task_statuses_status_type_check CHECK ((status_type = ANY (ARRAY['backlog'::text, 'unstarted'::text, 'started'::text, 'completed'::text, 'canceled'::text])))
+);
+
+
+--
+-- Name: task_teams; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.task_teams (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    name text NOT NULL,
+    key text,
+    description text,
+    icon text,
+    color text,
+    source_id uuid,
+    source_external_id text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT task_teams_key_check CHECK (((key IS NULL) OR (length(TRIM(BOTH FROM key)) > 0))),
+    CONSTRAINT task_teams_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0))
+);
+
+
+--
+-- Name: tasks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.tasks (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    team_id uuid NOT NULL,
+    status_id uuid,
+    project_id uuid,
+    parent_task_id uuid,
+    creator_user_id uuid,
+    assignee_user_id uuid,
+    delegate_user_id uuid,
+    title text NOT NULL,
+    description text,
+    priority_value integer DEFAULT 0 NOT NULL,
+    priority_label text,
+    estimate numeric,
+    sort_order numeric,
+    priority_sort_order numeric,
+    due_date date,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    canceled_at timestamp with time zone,
+    auto_closed_at timestamp with time zone,
+    auto_archived_at timestamp with time zone,
+    snoozed_until_at timestamp with time zone,
+    added_to_project_at timestamp with time zone,
+    added_to_team_at timestamp with time zone,
+    source_created_at timestamp with time zone,
+    source_updated_at timestamp with time zone,
+    source_id uuid,
+    source_external_id text,
+    source_identifier text,
+    source_number integer,
+    source_url text,
+    git_branch_name text,
+    sla_started_at timestamp with time zone,
+    sla_medium_risk_at timestamp with time zone,
+    sla_high_risk_at timestamp with time zone,
+    sla_breaches_at timestamp with time zone,
+    sla_type text,
+    metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
+    archived_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT tasks_check CHECK (((completed_at IS NULL) OR (canceled_at IS NULL))),
+    CONSTRAINT tasks_check1 CHECK (((parent_task_id IS NULL) OR (parent_task_id <> id))),
+    CONSTRAINT tasks_estimate_check CHECK (((estimate IS NULL) OR (estimate >= (0)::numeric))),
+    CONSTRAINT tasks_priority_value_check CHECK (((priority_value >= 0) AND (priority_value <= 4))),
+    CONSTRAINT tasks_source_number_check CHECK (((source_number IS NULL) OR (source_number > 0))),
+    CONSTRAINT tasks_title_check CHECK ((length(TRIM(BOTH FROM title)) > 0))
 );
 
 
@@ -1350,6 +1743,14 @@ ALTER TABLE ONLY public.interactions
 
 ALTER TABLE ONLY public.interactions
     ADD CONSTRAINT interactions_source_id_source_external_id_key UNIQUE (source_id, source_external_id);
+
+
+--
+-- Name: internal_users internal_users_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_users
+    ADD CONSTRAINT internal_users_pkey PRIMARY KEY (id);
 
 
 --
@@ -1582,6 +1983,70 @@ ALTER TABLE ONLY public.tags
 
 ALTER TABLE ONLY public.tags
     ADD CONSTRAINT tags_slug_key UNIQUE (slug);
+
+
+--
+-- Name: task_attachments task_attachments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_attachments
+    ADD CONSTRAINT task_attachments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_comments task_comments_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_comments
+    ADD CONSTRAINT task_comments_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_project_teams task_project_teams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_project_teams
+    ADD CONSTRAINT task_project_teams_pkey PRIMARY KEY (project_id, team_id);
+
+
+--
+-- Name: task_projects task_projects_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_projects
+    ADD CONSTRAINT task_projects_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_relations task_relations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_relations
+    ADD CONSTRAINT task_relations_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_statuses task_statuses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_statuses
+    ADD CONSTRAINT task_statuses_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: task_teams task_teams_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_teams
+    ADD CONSTRAINT task_teams_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: tasks tasks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_pkey PRIMARY KEY (id);
 
 
 --
@@ -1841,6 +2306,41 @@ CREATE INDEX idx_interactions_subject_trgm ON public.interactions USING gin (low
 --
 
 CREATE INDEX idx_interactions_type ON public.interactions USING btree (type);
+
+
+--
+-- Name: idx_internal_users_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_internal_users_active ON public.internal_users USING btree (is_active) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_internal_users_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_internal_users_metadata ON public.internal_users USING gin (metadata);
+
+
+--
+-- Name: idx_internal_users_name_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_internal_users_name_trgm ON public.internal_users USING gin (lower(name) public.gin_trgm_ops) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_internal_users_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_internal_users_search_fts ON public.internal_users USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, title, (email)::text]))) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_internal_users_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_internal_users_source ON public.internal_users USING btree (source_id);
 
 
 --
@@ -2222,6 +2722,272 @@ CREATE INDEX idx_taggings_target ON public.taggings USING btree (target_type, ta
 
 
 --
+-- Name: idx_task_attachments_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_attachments_metadata ON public.task_attachments USING gin (metadata);
+
+
+--
+-- Name: idx_task_attachments_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_attachments_task ON public.task_attachments USING btree (task_id);
+
+
+--
+-- Name: idx_task_comments_author; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_comments_author ON public.task_comments USING btree (author_user_id);
+
+
+--
+-- Name: idx_task_comments_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_comments_metadata ON public.task_comments USING gin (metadata);
+
+
+--
+-- Name: idx_task_comments_parent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_comments_parent ON public.task_comments USING btree (parent_comment_id);
+
+
+--
+-- Name: idx_task_comments_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_comments_search_fts ON public.task_comments USING gin (to_tsvector('english'::regconfig, "left"(body, 250000))) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_task_comments_source_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_comments_source_updated_at ON public.task_comments USING btree (source_updated_at DESC);
+
+
+--
+-- Name: idx_task_comments_task; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_comments_task ON public.task_comments USING btree (task_id, source_created_at);
+
+
+--
+-- Name: idx_task_project_teams_team; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_project_teams_team ON public.task_project_teams USING btree (team_id);
+
+
+--
+-- Name: idx_task_projects_lead; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_projects_lead ON public.task_projects USING btree (lead_user_id);
+
+
+--
+-- Name: idx_task_projects_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_projects_metadata ON public.task_projects USING gin (metadata);
+
+
+--
+-- Name: idx_task_projects_name_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_projects_name_trgm ON public.task_projects USING gin (lower(name) public.gin_trgm_ops) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_task_projects_priority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_projects_priority ON public.task_projects USING btree (priority_value);
+
+
+--
+-- Name: idx_task_projects_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_projects_search_fts ON public.task_projects USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, summary, description, status_name, priority_label]))) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_task_projects_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_projects_source ON public.task_projects USING btree (source_id);
+
+
+--
+-- Name: idx_task_projects_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_projects_status ON public.task_projects USING btree (status_type);
+
+
+--
+-- Name: idx_task_relations_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_relations_metadata ON public.task_relations USING gin (metadata);
+
+
+--
+-- Name: idx_task_relations_related; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_relations_related ON public.task_relations USING btree (related_task_id);
+
+
+--
+-- Name: idx_task_relations_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_relations_type ON public.task_relations USING btree (relation_type);
+
+
+--
+-- Name: idx_task_statuses_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_statuses_metadata ON public.task_statuses USING gin (metadata);
+
+
+--
+-- Name: idx_task_statuses_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_statuses_source ON public.task_statuses USING btree (source_id);
+
+
+--
+-- Name: idx_task_statuses_team; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_statuses_team ON public.task_statuses USING btree (team_id);
+
+
+--
+-- Name: idx_task_statuses_type; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_statuses_type ON public.task_statuses USING btree (status_type);
+
+
+--
+-- Name: idx_task_teams_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_teams_metadata ON public.task_teams USING gin (metadata);
+
+
+--
+-- Name: idx_task_teams_source; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_teams_source ON public.task_teams USING btree (source_id);
+
+
+--
+-- Name: idx_tasks_active_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_active_updated_at ON public.tasks USING btree (updated_at DESC) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_tasks_assignee; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_assignee ON public.tasks USING btree (assignee_user_id);
+
+
+--
+-- Name: idx_tasks_creator; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_creator ON public.tasks USING btree (creator_user_id);
+
+
+--
+-- Name: idx_tasks_due_date; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_due_date ON public.tasks USING btree (due_date) WHERE (due_date IS NOT NULL);
+
+
+--
+-- Name: idx_tasks_metadata; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_metadata ON public.tasks USING gin (metadata);
+
+
+--
+-- Name: idx_tasks_parent; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_parent ON public.tasks USING btree (parent_task_id);
+
+
+--
+-- Name: idx_tasks_priority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_priority ON public.tasks USING btree (priority_value);
+
+
+--
+-- Name: idx_tasks_project_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_project_status ON public.tasks USING btree (project_id, status_id);
+
+
+--
+-- Name: idx_tasks_search_fts; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_search_fts ON public.tasks USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[title, "left"(description, 250000), source_identifier, priority_label, git_branch_name]))) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_tasks_source_updated_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_source_updated_at ON public.tasks USING btree (source_updated_at DESC);
+
+
+--
+-- Name: idx_tasks_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_status ON public.tasks USING btree (status_id);
+
+
+--
+-- Name: idx_tasks_team_status; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_team_status ON public.tasks USING btree (team_id, status_id);
+
+
+--
+-- Name: idx_tasks_title_trgm; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_title_trgm ON public.tasks USING gin (lower(title) public.gin_trgm_ops) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: uq_affiliations_primary_per_person; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2250,6 +3016,20 @@ CREATE UNIQUE INDEX uq_interaction_participants_person ON public.interaction_par
 
 
 --
+-- Name: uq_internal_users_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_internal_users_email ON public.internal_users USING btree (email);
+
+
+--
+-- Name: uq_internal_users_source_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_internal_users_source_external_id ON public.internal_users USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
+
+
+--
 -- Name: uq_partnership_services_active_name; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2268,6 +3048,90 @@ CREATE UNIQUE INDEX uq_partnerships_active_org_name ON public.partnerships USING
 --
 
 CREATE UNIQUE INDEX uq_semantic_embeddings_active_chunk ON public.semantic_embeddings USING btree (target_type, target_id, embedding_provider, embedding_model, embedding_model_version, chunk_index) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: uq_task_attachments_source_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_attachments_source_external_id ON public.task_attachments USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
+
+
+--
+-- Name: uq_task_comments_source_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_comments_source_external_id ON public.task_comments USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
+
+
+--
+-- Name: uq_task_projects_active_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_projects_active_name ON public.task_projects USING btree (lower(name)) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: uq_task_projects_source_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_projects_source_external_id ON public.task_projects USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
+
+
+--
+-- Name: uq_task_relations_active; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_relations_active ON public.task_relations USING btree (task_id, related_task_id, relation_type) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: uq_task_statuses_active_team_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_statuses_active_team_name ON public.task_statuses USING btree (team_id, lower(name)) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: uq_task_statuses_source_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_statuses_source_external_id ON public.task_statuses USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
+
+
+--
+-- Name: uq_task_teams_active_key; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_teams_active_key ON public.task_teams USING btree (lower(key)) WHERE ((archived_at IS NULL) AND (key IS NOT NULL));
+
+
+--
+-- Name: uq_task_teams_active_name; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_teams_active_name ON public.task_teams USING btree (lower(name)) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: uq_task_teams_source_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_task_teams_source_external_id ON public.task_teams USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
+
+
+--
+-- Name: uq_tasks_source_external_id; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_tasks_source_external_id ON public.tasks USING btree (source_id, source_external_id) WHERE (source_external_id IS NOT NULL);
+
+
+--
+-- Name: uq_tasks_source_identifier; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_tasks_source_identifier ON public.tasks USING btree (source_id, source_identifier) WHERE (source_identifier IS NOT NULL);
 
 
 --
@@ -2345,6 +3209,13 @@ CREATE TRIGGER trg_interaction_participants_updated_at BEFORE UPDATE ON public.i
 --
 
 CREATE TRIGGER trg_interactions_updated_at BEFORE UPDATE ON public.interactions FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: internal_users trg_internal_users_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_internal_users_updated_at BEFORE UPDATE ON public.internal_users FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
 
 
 --
@@ -2450,6 +3321,55 @@ CREATE TRIGGER trg_sources_updated_at BEFORE UPDATE ON public.sources FOR EACH R
 --
 
 CREATE TRIGGER trg_tags_updated_at BEFORE UPDATE ON public.tags FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: task_attachments trg_task_attachments_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_task_attachments_updated_at BEFORE UPDATE ON public.task_attachments FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: task_comments trg_task_comments_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_task_comments_updated_at BEFORE UPDATE ON public.task_comments FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: task_projects trg_task_projects_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_task_projects_updated_at BEFORE UPDATE ON public.task_projects FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: task_relations trg_task_relations_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_task_relations_updated_at BEFORE UPDATE ON public.task_relations FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: task_statuses trg_task_statuses_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_task_statuses_updated_at BEFORE UPDATE ON public.task_statuses FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: task_teams trg_task_teams_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_task_teams_updated_at BEFORE UPDATE ON public.task_teams FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+
+
+--
+-- Name: tasks trg_tasks_updated_at; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_tasks_updated_at BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
 
 
 --
@@ -2637,6 +3557,14 @@ ALTER TABLE ONLY public.interactions
 
 
 --
+-- Name: internal_users internal_users_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.internal_users
+    ADD CONSTRAINT internal_users_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
 -- Name: organization_research_profiles organization_research_profiles_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -2810,6 +3738,198 @@ ALTER TABLE ONLY public.taggings
 
 ALTER TABLE ONLY public.taggings
     ADD CONSTRAINT taggings_tag_id_fkey FOREIGN KEY (tag_id) REFERENCES public.tags(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_attachments task_attachments_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_attachments
+    ADD CONSTRAINT task_attachments_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_attachments task_attachments_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_attachments
+    ADD CONSTRAINT task_attachments_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_comments task_comments_author_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_comments
+    ADD CONSTRAINT task_comments_author_user_id_fkey FOREIGN KEY (author_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_comments task_comments_parent_comment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_comments
+    ADD CONSTRAINT task_comments_parent_comment_id_fkey FOREIGN KEY (parent_comment_id) REFERENCES public.task_comments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_comments task_comments_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_comments
+    ADD CONSTRAINT task_comments_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_comments task_comments_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_comments
+    ADD CONSTRAINT task_comments_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_project_teams task_project_teams_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_project_teams
+    ADD CONSTRAINT task_project_teams_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.task_projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_project_teams task_project_teams_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_project_teams
+    ADD CONSTRAINT task_project_teams_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.task_teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_projects task_projects_lead_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_projects
+    ADD CONSTRAINT task_projects_lead_user_id_fkey FOREIGN KEY (lead_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_projects task_projects_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_projects
+    ADD CONSTRAINT task_projects_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_relations task_relations_related_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_relations
+    ADD CONSTRAINT task_relations_related_task_id_fkey FOREIGN KEY (related_task_id) REFERENCES public.tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_relations task_relations_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_relations
+    ADD CONSTRAINT task_relations_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_relations task_relations_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_relations
+    ADD CONSTRAINT task_relations_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.tasks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_statuses task_statuses_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_statuses
+    ADD CONSTRAINT task_statuses_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: task_statuses task_statuses_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_statuses
+    ADD CONSTRAINT task_statuses_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.task_teams(id) ON DELETE CASCADE;
+
+
+--
+-- Name: task_teams task_teams_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.task_teams
+    ADD CONSTRAINT task_teams_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_assignee_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_assignee_user_id_fkey FOREIGN KEY (assignee_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_creator_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_creator_user_id_fkey FOREIGN KEY (creator_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_delegate_user_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_delegate_user_id_fkey FOREIGN KEY (delegate_user_id) REFERENCES public.internal_users(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_parent_task_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_parent_task_id_fkey FOREIGN KEY (parent_task_id) REFERENCES public.tasks(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_project_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.task_projects(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_source_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_status_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_status_id_fkey FOREIGN KEY (status_id) REFERENCES public.task_statuses(id) ON DELETE SET NULL;
+
+
+--
+-- Name: tasks tasks_team_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.tasks
+    ADD CONSTRAINT tasks_team_id_fkey FOREIGN KEY (team_id) REFERENCES public.task_teams(id) ON DELETE RESTRICT;
 
 
 --
