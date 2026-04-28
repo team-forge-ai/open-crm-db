@@ -21,7 +21,7 @@ CREATE INDEX idx_partnership_people_person      ON partnership_people (person_id
 CREATE INDEX idx_partnership_people_role        ON partnership_people (role);
 CREATE TRIGGER trg_partnership_people_updated_at
   BEFORE UPDATE ON partnership_people
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 
 -- Down Migration

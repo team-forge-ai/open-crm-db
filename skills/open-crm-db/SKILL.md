@@ -1,13 +1,13 @@
 ---
-name: picardo-internal-db
-description: Operate Picardo's remote Neon Postgres headless CRM. Use when Codex needs to inspect, search, or edit the Picardo internal database; sync conversations, calls, transcripts, meetings, emails, documents, tasks, AI notes, extracted facts, people, organizations, partnerships, tags, or relationship edges; or run CRM SQL against the live remote database.
+name: open-crm-db
+description: Operate an open-crm-db Postgres database. Use when an AI agent needs to inspect, search, or edit the headless CRM database; sync conversations, calls, transcripts, meetings, emails, documents, tasks, AI notes, extracted facts, people, organizations, partnerships, tags, or relationship edges; or run CRM SQL against the live database.
 ---
 
-# Picardo Internal DB
+# open-crm-db
 
 ## Overview
 
-Use this skill to work with Picardo's live remote Postgres CRM. It is
+Use this skill to work with a live `open-crm-db` Postgres database. It is
 self-contained so it can be copied or aliased into `~/.agents/skills` without
 repo-relative references. Live credentials are intentionally local-only: set
 `DATABASE_URL` in the environment or create `references/credentials.env` from
@@ -24,7 +24,7 @@ make writes only when the user asks for data changes or sync work.
 - `references/schema.md`: human-readable entity model.
 - `references/ai-ingestion.md`: identity, dedupe, idempotency, privacy rules.
 - `references/sync-workflows.md`: SQL patterns for syncing interactions and transcripts.
-- `scripts/psql.sh`: loads credentials and runs `psql` against Neon.
+- `scripts/psql.sh`: loads credentials and runs `psql` against the configured database.
 
 Read `references/schema.md` and `references/ai-ingestion.md` before writing
 data. Use `references/schema.sql` when you need exact columns, constraints,

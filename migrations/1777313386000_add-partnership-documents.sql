@@ -21,7 +21,7 @@ CREATE INDEX idx_partnership_documents_document    ON partnership_documents (doc
 CREATE INDEX idx_partnership_documents_role        ON partnership_documents (role);
 CREATE TRIGGER trg_partnership_documents_updated_at
   BEFORE UPDATE ON partnership_documents
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 
 -- Down Migration

@@ -250,7 +250,7 @@ function loadEnvironment(repoRoot: string, credentialsEnvPath?: string): void {
     path.join(
       repoRoot,
       'skills',
-      'picardo-internal-db',
+      'open-crm-db',
       'references',
       'credentials.env',
     ),
@@ -258,7 +258,7 @@ function loadEnvironment(repoRoot: string, credentialsEnvPath?: string): void {
       homedir(),
       '.codex',
       'skills',
-      'picardo-internal-db',
+      'open-crm-db',
       'references',
       'credentials.env',
     ),
@@ -266,7 +266,7 @@ function loadEnvironment(repoRoot: string, credentialsEnvPath?: string): void {
       homedir(),
       '.agents',
       'skills',
-      'picardo-internal-db',
+      'open-crm-db',
       'references',
       'credentials.env',
     ),
@@ -360,7 +360,7 @@ async function assertEmbeddingSchema(pool: pg.Pool): Promise<void> {
 
   if (!result.rows[0]?.exists) {
     throw new Error(
-      'semantic_embeddings does not exist. Run `pnpm picardo-db migrate up` before backfilling embeddings.',
+      'semantic_embeddings does not exist. Run `pnpm open-crm-db migrate up` before backfilling embeddings.',
     )
   }
 }
@@ -1139,7 +1139,7 @@ async function writeChunks(
           JSON.stringify({
             title: candidate.title,
             source_updated_at: candidate.updated_at?.toISOString() ?? null,
-            backfill_command: 'picardo-db embeddings backfill',
+            backfill_command: 'open-crm-db embeddings backfill',
           }),
         ],
       )

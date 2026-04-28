@@ -1,0 +1,4 @@
+interface:
+  display_name: 'open-crm-db'
+  short_description: 'Open headless-CRM database operations'
+  default_prompt: 'Use $open-crm-db to inspect the bundled schema and safely search or sync CRM records.'

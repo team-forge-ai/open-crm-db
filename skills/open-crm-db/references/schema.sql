@@ -226,10 +226,10 @@ $$;
 
 
 --
--- Name: picardo_check_task_project_team(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: crm_check_task_project_team(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.picardo_check_task_project_team() RETURNS trigger
+CREATE FUNCTION public.crm_check_task_project_team() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -253,10 +253,10 @@ $$;
 
 
 --
--- Name: picardo_prevent_task_project_team_orphan(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: crm_prevent_task_project_team_orphan(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.picardo_prevent_task_project_team_orphan() RETURNS trigger
+CREATE FUNCTION public.crm_prevent_task_project_team_orphan() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -277,10 +277,10 @@ $$;
 
 
 --
--- Name: picardo_search_text(text[]); Type: FUNCTION; Schema: public; Owner: -
+-- Name: crm_search_text(text[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.picardo_search_text(VARIADIC parts text[]) RETURNS text
+CREATE FUNCTION public.crm_search_text(VARIADIC parts text[]) RETURNS text
     LANGUAGE sql IMMUTABLE PARALLEL SAFE
     AS $$
   SELECT COALESCE(array_to_string(parts, ' ', ''), '');
@@ -288,10 +288,10 @@ $$;
 
 
 --
--- Name: picardo_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+-- Name: crm_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
-CREATE FUNCTION public.picardo_set_updated_at() RETURNS trigger
+CREATE FUNCTION public.crm_set_updated_at() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -324,7 +324,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       concat_ws(' / ', tm.title, tm.email::text) AS subtitle,
       tm.updated_at AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(tm.name, tm.title, tm.email::text)),
+        to_tsvector('english', crm_search_text(tm.name, tm.title, tm.email::text)),
         query.tsq,
         32
       ) AS rank,
@@ -339,7 +339,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     CROSS JOIN query
     WHERE tm.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'team_member' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(tm.name, tm.title, tm.email::text)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(tm.name, tm.title, tm.email::text)) @@ query.tsq
 
     UNION ALL
 
@@ -350,7 +350,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       concat_ws(' / ', tp.status_name, tp.priority_label, tp.target_date::text) AS subtitle,
       COALESCE(tp.completed_at, tp.canceled_at, tp.started_at, tp.updated_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)),
+        to_tsvector('english', crm_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)),
         query.tsq,
         32
       ) AS rank,
@@ -365,7 +365,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     CROSS JOIN query
     WHERE tp.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'task_project' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)) @@ query.tsq
 
     UNION ALL
 
@@ -385,7 +385,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
+          crm_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
         ),
         query.tsq,
         32
@@ -412,7 +412,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       AND (filter_target_types IS NULL OR 'task' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
+        crm_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
       ) @@ query.tsq
 
     UNION ALL
@@ -477,7 +477,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
+          crm_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
         ),
         query.tsq,
         32
@@ -495,7 +495,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       AND (filter_target_types IS NULL OR 'organization' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
+        crm_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
       ) @@ query.tsq
 
     UNION ALL
@@ -509,7 +509,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
+          crm_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
         ),
         query.tsq,
         32
@@ -527,7 +527,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       AND (filter_target_types IS NULL OR 'person' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
+        crm_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
       ) @@ query.tsq
 
     UNION ALL
@@ -538,7 +538,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       COALESCE(i.subject, i.type::text) AS title,
       concat_ws(' / ', i.type::text, i.direction::text, i.location) AS subtitle,
       i.occurred_at,
-      ts_rank_cd(to_tsvector('english', picardo_search_text(i.subject, left(i.body, 250000), i.location)), query.tsq, 32) AS rank,
+      ts_rank_cd(to_tsvector('english', crm_search_text(i.subject, left(i.body, 250000), i.location)), query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', i.subject, left(i.body, 250000), i.location),
@@ -550,7 +550,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE i.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'interaction' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(i.subject, left(i.body, 250000), i.location)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(i.subject, left(i.body, 250000), i.location)) @@ query.tsq
 
     UNION ALL
 
@@ -583,7 +583,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       concat_ws(' / ', d.document_type, d.source_path) AS subtitle,
       COALESCE(d.occurred_at, d.authored_at, d.created_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)),
+        to_tsvector('english', crm_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)),
         query.tsq,
         32
       ) AS rank,
@@ -598,7 +598,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE d.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'document' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)) @@ query.tsq
 
     UNION ALL
 
@@ -608,7 +608,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       COALESCE(an.title, an.kind::text) AS title,
       concat_ws(' / ', an.kind::text, an.model, an.model_version) AS subtitle,
       an.generated_at AS occurred_at,
-      ts_rank_cd(to_tsvector('english', picardo_search_text(an.title, left(an.content, 250000))), query.tsq, 32) AS rank,
+      ts_rank_cd(to_tsvector('english', crm_search_text(an.title, left(an.content, 250000))), query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', an.title, left(an.content, 250000)),
@@ -619,7 +619,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     FROM ai_notes an
     CROSS JOIN query
     WHERE (filter_target_types IS NULL OR 'ai_note' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(an.title, left(an.content, 250000))) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(an.title, left(an.content, 250000))) @@ query.tsq
 
     UNION ALL
 
@@ -629,7 +629,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       ef.key AS title,
       ef.subject_type::text AS subtitle,
       ef.observed_at AS occurred_at,
-      ts_rank_cd(to_tsvector('english', picardo_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))), query.tsq, 32) AS rank,
+      ts_rank_cd(to_tsvector('english', crm_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))), query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', ef.key, ef.value_text, left(ef.source_excerpt, 50000)),
@@ -640,7 +640,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     FROM extracted_facts ef
     CROSS JOIN query
     WHERE (filter_target_types IS NULL OR 'extracted_fact' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))) @@ query.tsq
 
     UNION ALL
 
@@ -653,7 +653,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(
+          crm_search_text(
             orp.canonical_name,
             orp.website,
             orp.domain::text,
@@ -689,7 +689,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     WHERE (filter_target_types IS NULL OR 'organization_research_profile' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(
+        crm_search_text(
           orp.canonical_name,
           orp.website,
           orp.domain::text,
@@ -717,7 +717,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       concat_ws(' / ', p.partnership_type, p.stage, p.priority) AS subtitle,
       COALESCE(p.launched_at, p.signed_at, p.updated_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)),
+        to_tsvector('english', crm_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)),
         query.tsq,
         32
       ) AS rank,
@@ -732,7 +732,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE p.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)) @@ query.tsq
 
     UNION ALL
 
@@ -743,7 +743,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       concat_ws(' / ', ps.service_type, ps.status) AS subtitle,
       ps.updated_at AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)),
+        to_tsvector('english', crm_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)),
         query.tsq,
         32
       ) AS rank,
@@ -758,7 +758,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE ps.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership_service' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)) @@ query.tsq
 
     UNION ALL
 
@@ -769,7 +769,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       concat_ws(' / ', pi.status, pi.sync_direction) AS subtitle,
       COALESCE(pi.last_sync_at, pi.updated_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)),
+        to_tsvector('english', crm_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)),
         query.tsq,
         32
       ) AS rank,
@@ -784,7 +784,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE pi.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership_integration' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)) @@ query.tsq
   )
   SELECT
     ranked.target_type,
@@ -1791,7 +1791,7 @@ COMMENT ON TABLE public.task_attachments IS 'Task attachment and external-link m
 -- Name: COLUMN task_attachments.url; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.task_attachments.url IS 'Attachment or external-link URL visible from Picardo.';
+COMMENT ON COLUMN public.task_attachments.url IS 'Attachment or external-link URL visible from the operating organization.';
 
 
 --
@@ -1854,7 +1854,7 @@ COMMENT ON COLUMN public.task_comments.author_member_id IS 'Team member or bot a
 -- Name: COLUMN task_comments.body; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.task_comments.body IS 'Comment body, usually Markdown for Linear imports.';
+COMMENT ON COLUMN public.task_comments.body IS 'Comment body, usually Markdown for imported comments.';
 
 
 --
@@ -1956,14 +1956,14 @@ COMMENT ON COLUMN public.task_projects.status_type IS 'Normalized project status
 -- Name: COLUMN task_projects.priority_value; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.task_projects.priority_value IS 'Numeric priority imported from Linear: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
+COMMENT ON COLUMN public.task_projects.priority_value IS 'Numeric priority: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
 
 
 --
 -- Name: COLUMN task_projects.lead_member_id; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.task_projects.lead_member_id IS 'Picardo team member who leads the project, when known.';
+COMMENT ON COLUMN public.task_projects.lead_member_id IS 'Team member who leads the project, when known.';
 
 
 --
@@ -2083,7 +2083,7 @@ CREATE TABLE public.task_teams (
 -- Name: TABLE task_teams; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.task_teams IS 'Task workflow containers imported from Linear teams or created for Picardo internal work.';
+COMMENT ON TABLE public.task_teams IS 'Task workflow containers, optionally imported from an external task tracker.';
 
 
 --
@@ -2159,7 +2159,7 @@ CREATE TABLE public.tasks (
 -- Name: TABLE tasks; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.tasks IS 'Internal operating tasks, including imported Linear issues.';
+COMMENT ON TABLE public.tasks IS 'Internal operating tasks. Generic work-item model.';
 
 
 --
@@ -2201,14 +2201,14 @@ COMMENT ON COLUMN public.tasks.delegate_member_id IS 'Delegated team member or a
 -- Name: COLUMN tasks.priority_value; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.tasks.priority_value IS 'Numeric priority imported from Linear: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
+COMMENT ON COLUMN public.tasks.priority_value IS 'Numeric priority: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
 
 
 --
 -- Name: COLUMN tasks.source_external_id; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.tasks.source_external_id IS 'Stable upstream task ID. For Linear MCP imports this may be the issue identifier when UUID is not exposed.';
+COMMENT ON COLUMN public.tasks.source_external_id IS 'Stable upstream task ID from the source system, when imported.';
 
 
 --
@@ -2266,7 +2266,7 @@ CREATE TABLE public.team_members (
 -- Name: TABLE team_members; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON TABLE public.team_members IS 'Picardo team members and system actors who own, create, or comment on internal operational work. Not external CRM contacts.';
+COMMENT ON TABLE public.team_members IS 'Internal team members and system actors who own, create, or comment on internal operational work. Not external CRM contacts.';
 
 
 --
@@ -2280,7 +2280,7 @@ COMMENT ON COLUMN public.team_members.title IS 'Internal role/title for the team
 -- Name: COLUMN team_members.is_bot; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.team_members.is_bot IS 'True for imported system or bot actors such as the Linear app user.';
+COMMENT ON COLUMN public.team_members.is_bot IS 'True for imported system or bot actors.';
 
 
 --
@@ -2813,7 +2813,7 @@ CREATE INDEX idx_ai_notes_interaction ON public.ai_notes USING btree (interactio
 -- Name: idx_ai_notes_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_ai_notes_search_fts ON public.ai_notes USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[title, "left"(content, 250000)])));
+CREATE INDEX idx_ai_notes_search_fts ON public.ai_notes USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, "left"(content, 250000)])));
 
 
 --
@@ -2932,7 +2932,7 @@ CREATE INDEX idx_documents_occurred_at ON public.documents USING btree (occurred
 -- Name: idx_documents_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_documents_search_fts ON public.documents USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[title, document_type, summary, "left"(body, 500000), source_path]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_documents_search_fts ON public.documents USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, document_type, summary, "left"(body, 500000), source_path]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -2974,7 +2974,7 @@ CREATE INDEX idx_extracted_facts_observed ON public.extracted_facts USING btree 
 -- Name: idx_extracted_facts_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_extracted_facts_search_fts ON public.extracted_facts USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[key, value_text, "left"(source_excerpt, 50000)])));
+CREATE INDEX idx_extracted_facts_search_fts ON public.extracted_facts USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[key, value_text, "left"(source_excerpt, 50000)])));
 
 
 --
@@ -3009,7 +3009,7 @@ CREATE INDEX idx_interactions_occurred_at ON public.interactions USING btree (oc
 -- Name: idx_interactions_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_interactions_search_fts ON public.interactions USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[subject, "left"(body, 250000), location]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_interactions_search_fts ON public.interactions USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[subject, "left"(body, 250000), location]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3030,7 +3030,7 @@ CREATE INDEX idx_interactions_type ON public.interactions USING btree (type);
 -- Name: idx_org_research_profiles_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_org_research_profiles_search_fts ON public.organization_research_profiles USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[canonical_name, website, (domain)::text, one_line_description, category, healthcare_relevance, partnership_fit, partnership_fit_rationale, (offerings)::text, (likely_use_cases)::text, (integration_signals)::text, (compliance_signals)::text, (key_public_people)::text, (suggested_tags)::text, (review_flags)::text])));
+CREATE INDEX idx_org_research_profiles_search_fts ON public.organization_research_profiles USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[canonical_name, website, (domain)::text, one_line_description, category, healthcare_relevance, partnership_fit, partnership_fit_rationale, (offerings)::text, (likely_use_cases)::text, (integration_signals)::text, (compliance_signals)::text, (key_public_people)::text, (suggested_tags)::text, (review_flags)::text])));
 
 
 --
@@ -3086,7 +3086,7 @@ CREATE INDEX idx_organizations_name_trgm ON public.organizations USING gin (lowe
 -- Name: idx_organizations_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_organizations_search_fts ON public.organizations USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, legal_name, (domain)::text, website, description, industry, hq_city, hq_region, hq_country, notes]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_organizations_search_fts ON public.organizations USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, legal_name, (domain)::text, website, description, industry, hq_city, hq_region, hq_country, notes]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3135,7 +3135,7 @@ CREATE INDEX idx_partnership_integrations_partnership ON public.partnership_inte
 -- Name: idx_partnership_integrations_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_partnership_integrations_search_fts ON public.partnership_integrations USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[integration_type, status, sync_direction, (data_formats)::text, notes]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_partnership_integrations_search_fts ON public.partnership_integrations USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[integration_type, status, sync_direction, (data_formats)::text, notes]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3233,7 +3233,7 @@ CREATE INDEX idx_partnership_services_partnership ON public.partnership_services
 -- Name: idx_partnership_services_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_partnership_services_search_fts ON public.partnership_services USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, service_type, status, clinical_use, (data_modalities)::text]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_partnership_services_search_fts ON public.partnership_services USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, service_type, status, clinical_use, (data_modalities)::text]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3282,7 +3282,7 @@ CREATE INDEX idx_partnerships_priority ON public.partnerships USING btree (prior
 -- Name: idx_partnerships_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_partnerships_search_fts ON public.partnerships USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, partnership_type, stage, priority, strategic_rationale, commercial_model, status_notes]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_partnerships_search_fts ON public.partnerships USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, partnership_type, stage, priority, strategic_rationale, commercial_model, status_notes]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3338,7 +3338,7 @@ CREATE INDEX idx_people_primary_email ON public.people USING btree (primary_emai
 -- Name: idx_people_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_people_search_fts ON public.people USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_people_search_fts ON public.people USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3499,7 +3499,7 @@ CREATE INDEX idx_task_projects_priority ON public.task_projects USING btree (pri
 -- Name: idx_task_projects_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_task_projects_search_fts ON public.task_projects USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, summary, description, status_name, priority_label]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_task_projects_search_fts ON public.task_projects USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, summary, description, status_name, priority_label]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3639,7 +3639,7 @@ CREATE INDEX idx_tasks_project_status ON public.tasks USING btree (project_id, s
 -- Name: idx_tasks_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_tasks_search_fts ON public.tasks USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[title, "left"(description, 250000), source_identifier, priority_label, git_branch_name]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_tasks_search_fts ON public.tasks USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, "left"(description, 250000), source_identifier, priority_label, git_branch_name]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3695,7 +3695,7 @@ CREATE INDEX idx_team_members_name_trgm ON public.team_members USING gin (lower(
 -- Name: idx_team_members_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_team_members_search_fts ON public.team_members USING gin (to_tsvector('english'::regconfig, public.picardo_search_text(VARIADIC ARRAY[name, title, (email)::text]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_team_members_search_fts ON public.team_members USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, title, (email)::text]))) WHERE (archived_at IS NULL);
 
 
 --
@@ -3856,252 +3856,252 @@ CREATE UNIQUE INDEX uq_team_members_source_external_id ON public.team_members US
 -- Name: affiliations trg_affiliations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_affiliations_updated_at BEFORE UPDATE ON public.affiliations FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_affiliations_updated_at BEFORE UPDATE ON public.affiliations FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: ai_notes trg_ai_notes_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_ai_notes_updated_at BEFORE UPDATE ON public.ai_notes FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_ai_notes_updated_at BEFORE UPDATE ON public.ai_notes FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: call_transcripts trg_call_transcripts_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_call_transcripts_updated_at BEFORE UPDATE ON public.call_transcripts FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_call_transcripts_updated_at BEFORE UPDATE ON public.call_transcripts FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: document_interactions trg_document_interactions_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_document_interactions_updated_at BEFORE UPDATE ON public.document_interactions FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_document_interactions_updated_at BEFORE UPDATE ON public.document_interactions FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: document_organizations trg_document_organizations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_document_organizations_updated_at BEFORE UPDATE ON public.document_organizations FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_document_organizations_updated_at BEFORE UPDATE ON public.document_organizations FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: document_people trg_document_people_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_document_people_updated_at BEFORE UPDATE ON public.document_people FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_document_people_updated_at BEFORE UPDATE ON public.document_people FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: documents trg_documents_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_documents_updated_at BEFORE UPDATE ON public.documents FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_documents_updated_at BEFORE UPDATE ON public.documents FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: external_identities trg_external_identities_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_external_identities_updated_at BEFORE UPDATE ON public.external_identities FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_external_identities_updated_at BEFORE UPDATE ON public.external_identities FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: extracted_facts trg_extracted_facts_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_extracted_facts_updated_at BEFORE UPDATE ON public.extracted_facts FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_extracted_facts_updated_at BEFORE UPDATE ON public.extracted_facts FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: interaction_participants trg_interaction_participants_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_interaction_participants_updated_at BEFORE UPDATE ON public.interaction_participants FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_interaction_participants_updated_at BEFORE UPDATE ON public.interaction_participants FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: interactions trg_interactions_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_interactions_updated_at BEFORE UPDATE ON public.interactions FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_interactions_updated_at BEFORE UPDATE ON public.interactions FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: organization_research_profiles trg_organization_research_profiles_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_organization_research_profiles_updated_at BEFORE UPDATE ON public.organization_research_profiles FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_organization_research_profiles_updated_at BEFORE UPDATE ON public.organization_research_profiles FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: organizations trg_organizations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_organizations_updated_at BEFORE UPDATE ON public.organizations FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_organizations_updated_at BEFORE UPDATE ON public.organizations FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: partnership_documents trg_partnership_documents_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_partnership_documents_updated_at BEFORE UPDATE ON public.partnership_documents FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_partnership_documents_updated_at BEFORE UPDATE ON public.partnership_documents FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: partnership_integrations trg_partnership_integrations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_partnership_integrations_updated_at BEFORE UPDATE ON public.partnership_integrations FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_partnership_integrations_updated_at BEFORE UPDATE ON public.partnership_integrations FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: partnership_interactions trg_partnership_interactions_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_partnership_interactions_updated_at BEFORE UPDATE ON public.partnership_interactions FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_partnership_interactions_updated_at BEFORE UPDATE ON public.partnership_interactions FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: partnership_people trg_partnership_people_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_partnership_people_updated_at BEFORE UPDATE ON public.partnership_people FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_partnership_people_updated_at BEFORE UPDATE ON public.partnership_people FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: partnership_services trg_partnership_services_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_partnership_services_updated_at BEFORE UPDATE ON public.partnership_services FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_partnership_services_updated_at BEFORE UPDATE ON public.partnership_services FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: partnerships trg_partnerships_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_partnerships_updated_at BEFORE UPDATE ON public.partnerships FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_partnerships_updated_at BEFORE UPDATE ON public.partnerships FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: people trg_people_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_people_updated_at BEFORE UPDATE ON public.people FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_people_updated_at BEFORE UPDATE ON public.people FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: person_emails trg_person_emails_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_person_emails_updated_at BEFORE UPDATE ON public.person_emails FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_person_emails_updated_at BEFORE UPDATE ON public.person_emails FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: person_phones trg_person_phones_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_person_phones_updated_at BEFORE UPDATE ON public.person_phones FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_person_phones_updated_at BEFORE UPDATE ON public.person_phones FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: relationship_edges trg_relationship_edges_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_relationship_edges_updated_at BEFORE UPDATE ON public.relationship_edges FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_relationship_edges_updated_at BEFORE UPDATE ON public.relationship_edges FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: semantic_embeddings trg_semantic_embeddings_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_semantic_embeddings_updated_at BEFORE UPDATE ON public.semantic_embeddings FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_semantic_embeddings_updated_at BEFORE UPDATE ON public.semantic_embeddings FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: sources trg_sources_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_sources_updated_at BEFORE UPDATE ON public.sources FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_sources_updated_at BEFORE UPDATE ON public.sources FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: tags trg_tags_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_tags_updated_at BEFORE UPDATE ON public.tags FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_tags_updated_at BEFORE UPDATE ON public.tags FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: task_attachments trg_task_attachments_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_task_attachments_updated_at BEFORE UPDATE ON public.task_attachments FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_task_attachments_updated_at BEFORE UPDATE ON public.task_attachments FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: task_comments trg_task_comments_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_task_comments_updated_at BEFORE UPDATE ON public.task_comments FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_task_comments_updated_at BEFORE UPDATE ON public.task_comments FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: task_project_teams trg_task_project_teams_no_orphan; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_task_project_teams_no_orphan BEFORE DELETE OR UPDATE OF project_id, team_id ON public.task_project_teams FOR EACH ROW EXECUTE FUNCTION public.picardo_prevent_task_project_team_orphan();
+CREATE TRIGGER trg_task_project_teams_no_orphan BEFORE DELETE OR UPDATE OF project_id, team_id ON public.task_project_teams FOR EACH ROW EXECUTE FUNCTION public.crm_prevent_task_project_team_orphan();
 
 
 --
 -- Name: task_projects trg_task_projects_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_task_projects_updated_at BEFORE UPDATE ON public.task_projects FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_task_projects_updated_at BEFORE UPDATE ON public.task_projects FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: task_relations trg_task_relations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_task_relations_updated_at BEFORE UPDATE ON public.task_relations FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_task_relations_updated_at BEFORE UPDATE ON public.task_relations FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: task_statuses trg_task_statuses_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_task_statuses_updated_at BEFORE UPDATE ON public.task_statuses FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_task_statuses_updated_at BEFORE UPDATE ON public.task_statuses FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: task_teams trg_task_teams_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_task_teams_updated_at BEFORE UPDATE ON public.task_teams FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_task_teams_updated_at BEFORE UPDATE ON public.task_teams FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: tasks trg_tasks_project_team_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_tasks_project_team_guard BEFORE INSERT OR UPDATE OF project_id, team_id ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.picardo_check_task_project_team();
+CREATE TRIGGER trg_tasks_project_team_guard BEFORE INSERT OR UPDATE OF project_id, team_id ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.crm_check_task_project_team();
 
 
 --
 -- Name: tasks trg_tasks_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_tasks_updated_at BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_tasks_updated_at BEFORE UPDATE ON public.tasks FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --
 -- Name: team_members trg_team_members_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER trg_team_members_updated_at BEFORE UPDATE ON public.team_members FOR EACH ROW EXECUTE FUNCTION public.picardo_set_updated_at();
+CREATE TRIGGER trg_team_members_updated_at BEFORE UPDATE ON public.team_members FOR EACH ROW EXECUTE FUNCTION public.crm_set_updated_at();
 
 
 --

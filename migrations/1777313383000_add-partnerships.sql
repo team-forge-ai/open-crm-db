@@ -50,7 +50,7 @@ CREATE INDEX idx_partnerships_source       ON partnerships (source_id);
 CREATE INDEX idx_partnerships_metadata     ON partnerships USING GIN (metadata);
 CREATE TRIGGER trg_partnerships_updated_at
   BEFORE UPDATE ON partnerships
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- Partnerships are taggable operating artifacts.
 ALTER TABLE taggings

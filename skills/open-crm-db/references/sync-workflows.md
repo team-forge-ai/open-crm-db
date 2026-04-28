@@ -1,4 +1,4 @@
-# Picardo Internal DB Sync Workflows
+# open-crm-db Sync Workflows
 
 Use these patterns with `scripts/psql.sh`. Keep transcript bodies and AI note
 content out of chat responses.

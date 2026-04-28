@@ -1,6 +1,6 @@
 -- Up Migration
 
--- Internal operators are Picardo team members, not CRM people.
+-- Internal operators are organization team members, not CRM people.
 ALTER TABLE internal_users RENAME TO team_members;
 ALTER TABLE team_members RENAME CONSTRAINT internal_users_pkey TO team_members_pkey;
 ALTER TABLE team_members RENAME CONSTRAINT internal_users_email_check TO team_members_email_check;
@@ -51,7 +51,7 @@ ALTER TABLE tasks
 
 -- A task project may belong to multiple teams via task_project_teams. Enforce
 -- that an assigned task project is linked to the task's team.
-CREATE OR REPLACE FUNCTION picardo_check_task_project_team()
+CREATE OR REPLACE FUNCTION crm_check_task_project_team()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -76,9 +76,9 @@ $$;
 
 CREATE TRIGGER trg_tasks_project_team_guard
   BEFORE INSERT OR UPDATE OF project_id, team_id ON tasks
-  FOR EACH ROW EXECUTE FUNCTION picardo_check_task_project_team();
+  FOR EACH ROW EXECUTE FUNCTION crm_check_task_project_team();
 
-CREATE OR REPLACE FUNCTION picardo_prevent_task_project_team_orphan()
+CREATE OR REPLACE FUNCTION crm_prevent_task_project_team_orphan()
 RETURNS trigger
 LANGUAGE plpgsql
 AS $$
@@ -100,7 +100,7 @@ $$;
 
 CREATE TRIGGER trg_task_project_teams_no_orphan
   BEFORE DELETE OR UPDATE OF project_id, team_id ON task_project_teams
-  FOR EACH ROW EXECUTE FUNCTION picardo_prevent_task_project_team_orphan();
+  FOR EACH ROW EXECUTE FUNCTION crm_prevent_task_project_team_orphan();
 
 -- Keep target type names aligned with the renamed table.
 ALTER TABLE semantic_embeddings
@@ -163,7 +163,7 @@ AS $$
       concat_ws(' / ', tm.title, tm.email::text) AS subtitle,
       tm.updated_at AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(tm.name, tm.title, tm.email::text)),
+        to_tsvector('english', crm_search_text(tm.name, tm.title, tm.email::text)),
         query.tsq,
         32
       ) AS rank,
@@ -178,7 +178,7 @@ AS $$
     CROSS JOIN query
     WHERE tm.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'team_member' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(tm.name, tm.title, tm.email::text)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(tm.name, tm.title, tm.email::text)) @@ query.tsq
 
     UNION ALL
 
@@ -189,7 +189,7 @@ AS $$
       concat_ws(' / ', tp.status_name, tp.priority_label, tp.target_date::text) AS subtitle,
       COALESCE(tp.completed_at, tp.canceled_at, tp.started_at, tp.updated_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)),
+        to_tsvector('english', crm_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)),
         query.tsq,
         32
       ) AS rank,
@@ -204,7 +204,7 @@ AS $$
     CROSS JOIN query
     WHERE tp.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'task_project' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)) @@ query.tsq
 
     UNION ALL
 
@@ -224,7 +224,7 @@ AS $$
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
+          crm_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
         ),
         query.tsq,
         32
@@ -251,7 +251,7 @@ AS $$
       AND (filter_target_types IS NULL OR 'task' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
+        crm_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
       ) @@ query.tsq
 
     UNION ALL
@@ -295,15 +295,15 @@ AS $$
   LIMIT LEAST(GREATEST(COALESCE(match_count, 20), 1), 100);
 $$;
 
-COMMENT ON TABLE team_members IS 'Picardo team members and system actors who own, create, or comment on internal operational work. Not external CRM contacts.';
+COMMENT ON TABLE team_members IS 'Internal team members and system actors who own, create, or comment on internal operational work. Not external CRM contacts.';
 COMMENT ON COLUMN team_members.title IS 'Internal role/title for the team member, when known.';
-COMMENT ON COLUMN team_members.is_bot IS 'True for imported system or bot actors such as the Linear app user.';
+COMMENT ON COLUMN team_members.is_bot IS 'True for imported system or bot actors.';
 COMMENT ON COLUMN team_members.source_external_id IS 'Stable upstream member/user ID from the source system.';
 COMMENT ON COLUMN team_members.metadata IS 'Provider-specific member fields that are useful for provenance but not worth first-class columns.';
 COMMENT ON COLUMN team_members.archived_at IS 'Soft-delete timestamp; active team members have NULL archived_at.';
 
-COMMENT ON TABLE task_teams IS 'Task workflow containers imported from Linear teams or created for Picardo internal work.';
-COMMENT ON COLUMN task_teams.key IS 'Short issue prefix or team key, for example PIC.';
+COMMENT ON TABLE task_teams IS 'Task workflow containers, optionally imported from an external task tracker.';
+COMMENT ON COLUMN task_teams.key IS 'Short issue prefix or team key, for example ENG.';
 COMMENT ON COLUMN task_teams.source_external_id IS 'Stable upstream team ID from the source system.';
 
 COMMENT ON TABLE task_statuses IS 'Team-scoped workflow states. Names are data, not PostgreSQL enum values.';
@@ -313,34 +313,34 @@ COMMENT ON COLUMN task_statuses.position IS 'Source-system ordering for renderin
 COMMENT ON TABLE task_projects IS 'Internal operating project containers for tasks.';
 COMMENT ON COLUMN task_projects.status_name IS 'Display name of the project status from the source system.';
 COMMENT ON COLUMN task_projects.status_type IS 'Normalized project status category, kept flexible with a CHECK constraint.';
-COMMENT ON COLUMN task_projects.priority_value IS 'Numeric priority imported from Linear: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
-COMMENT ON COLUMN task_projects.lead_member_id IS 'Picardo team member who leads the project, when known.';
+COMMENT ON COLUMN task_projects.priority_value IS 'Numeric priority: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
+COMMENT ON COLUMN task_projects.lead_member_id IS 'Team member who leads the project, when known.';
 COMMENT ON COLUMN task_projects.source_url IS 'Canonical URL for the upstream project.';
 
 COMMENT ON TABLE task_project_teams IS 'Many-to-many membership between task projects and task teams.';
 
-COMMENT ON TABLE tasks IS 'Internal operating tasks, including imported Linear issues.';
+COMMENT ON TABLE tasks IS 'Internal operating tasks. Generic work-item model.';
 COMMENT ON COLUMN tasks.status_id IS 'Workflow state for the task; constrained to belong to the same team as tasks.team_id.';
 COMMENT ON COLUMN tasks.project_id IS 'Optional operating project; constrained by trigger to be linked to the task team.';
 COMMENT ON COLUMN tasks.creator_member_id IS 'Team member who created the task in the source system.';
 COMMENT ON COLUMN tasks.assignee_member_id IS 'Team member currently responsible for the task.';
 COMMENT ON COLUMN tasks.delegate_member_id IS 'Delegated team member or agent, when a source system provides one.';
-COMMENT ON COLUMN tasks.priority_value IS 'Numeric priority imported from Linear: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
-COMMENT ON COLUMN tasks.source_external_id IS 'Stable upstream task ID. For Linear MCP imports this may be the issue identifier when UUID is not exposed.';
-COMMENT ON COLUMN tasks.source_identifier IS 'Human-readable task identifier such as PIC-226.';
+COMMENT ON COLUMN tasks.priority_value IS 'Numeric priority: 0 none, 1 urgent, 2 high, 3 medium/normal, 4 low.';
+COMMENT ON COLUMN tasks.source_external_id IS 'Stable upstream task ID from the source system, when imported.';
+COMMENT ON COLUMN tasks.source_identifier IS 'Human-readable task identifier such as ENG-226.';
 COMMENT ON COLUMN tasks.source_number IS 'Numeric portion of the human-readable task identifier.';
 COMMENT ON COLUMN tasks.git_branch_name IS 'Suggested or generated git branch name from the task source.';
 COMMENT ON COLUMN tasks.metadata IS 'Provider-specific task fields that are useful for provenance but not worth first-class columns.';
 
 COMMENT ON TABLE task_comments IS 'Threaded comments attached to internal operating tasks.';
 COMMENT ON COLUMN task_comments.author_member_id IS 'Team member or bot actor who authored the comment.';
-COMMENT ON COLUMN task_comments.body IS 'Comment body, usually Markdown for Linear imports.';
+COMMENT ON COLUMN task_comments.body IS 'Comment body, usually Markdown for imported comments.';
 COMMENT ON COLUMN task_comments.source_external_id IS 'Stable upstream comment ID from the source system.';
 COMMENT ON COLUMN task_comments.source_created_at IS 'Original upstream comment creation timestamp.';
 COMMENT ON COLUMN task_comments.source_updated_at IS 'Original upstream comment update timestamp.';
 
 COMMENT ON TABLE task_attachments IS 'Task attachment and external-link metadata. Binary payloads are not stored here by default.';
-COMMENT ON COLUMN task_attachments.url IS 'Attachment or external-link URL visible from Picardo.';
+COMMENT ON COLUMN task_attachments.url IS 'Attachment or external-link URL visible from the operating organization.';
 COMMENT ON COLUMN task_attachments.source_url IS 'Canonical upstream URL for the attachment when different from url.';
 COMMENT ON COLUMN task_attachments.metadata IS 'Provider-specific attachment fields.';
 
@@ -352,8 +352,8 @@ COMMENT ON COLUMN task_relations.related_task_id IS 'The other task participatin
 
 DROP TRIGGER IF EXISTS trg_task_project_teams_no_orphan ON task_project_teams;
 DROP TRIGGER IF EXISTS trg_tasks_project_team_guard ON tasks;
-DROP FUNCTION IF EXISTS picardo_prevent_task_project_team_orphan();
-DROP FUNCTION IF EXISTS picardo_check_task_project_team();
+DROP FUNCTION IF EXISTS crm_prevent_task_project_team_orphan();
+DROP FUNCTION IF EXISTS crm_check_task_project_team();
 
 ALTER TABLE tasks DROP CONSTRAINT tasks_team_status_id_fkey;
 ALTER TABLE task_statuses DROP CONSTRAINT task_statuses_team_id_id_key;

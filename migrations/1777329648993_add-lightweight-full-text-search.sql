@@ -2,7 +2,7 @@
 
 CREATE EXTENSION IF NOT EXISTS pg_trgm;
 
-CREATE OR REPLACE FUNCTION picardo_search_text(VARIADIC parts text[])
+CREATE OR REPLACE FUNCTION crm_search_text(VARIADIC parts text[])
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
@@ -17,7 +17,7 @@ CREATE INDEX idx_organizations_search_fts
   USING GIN (
     to_tsvector(
       'english',
-      picardo_search_text(name, legal_name, domain::text, website, description, industry, hq_city, hq_region, hq_country, notes)
+      crm_search_text(name, legal_name, domain::text, website, description, industry, hq_city, hq_region, hq_country, notes)
     )
   )
   WHERE archived_at IS NULL;
@@ -27,7 +27,7 @@ CREATE INDEX idx_people_search_fts
   USING GIN (
     to_tsvector(
       'english',
-      picardo_search_text(full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes)
+      crm_search_text(full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes)
     )
   )
   WHERE archived_at IS NULL;
@@ -35,7 +35,7 @@ CREATE INDEX idx_people_search_fts
 CREATE INDEX idx_interactions_search_fts
   ON interactions
   USING GIN (
-    to_tsvector('english', picardo_search_text(subject, left(body, 250000), location))
+    to_tsvector('english', crm_search_text(subject, left(body, 250000), location))
   )
   WHERE archived_at IS NULL;
 
@@ -48,20 +48,20 @@ CREATE INDEX idx_call_transcripts_search_fts
 CREATE INDEX idx_documents_search_fts
   ON documents
   USING GIN (
-    to_tsvector('english', picardo_search_text(title, document_type, summary, left(body, 500000), source_path))
+    to_tsvector('english', crm_search_text(title, document_type, summary, left(body, 500000), source_path))
   )
   WHERE archived_at IS NULL;
 
 CREATE INDEX idx_ai_notes_search_fts
   ON ai_notes
   USING GIN (
-    to_tsvector('english', picardo_search_text(title, left(content, 250000)))
+    to_tsvector('english', crm_search_text(title, left(content, 250000)))
   );
 
 CREATE INDEX idx_extracted_facts_search_fts
   ON extracted_facts
   USING GIN (
-    to_tsvector('english', picardo_search_text(key, value_text, left(source_excerpt, 50000)))
+    to_tsvector('english', crm_search_text(key, value_text, left(source_excerpt, 50000)))
   );
 
 CREATE INDEX idx_org_research_profiles_search_fts
@@ -69,7 +69,7 @@ CREATE INDEX idx_org_research_profiles_search_fts
   USING GIN (
     to_tsvector(
       'english',
-      picardo_search_text(
+      crm_search_text(
         canonical_name,
         website,
         domain::text,
@@ -94,7 +94,7 @@ CREATE INDEX idx_partnerships_search_fts
   USING GIN (
     to_tsvector(
       'english',
-      picardo_search_text(name, partnership_type, stage, priority, strategic_rationale, commercial_model, status_notes)
+      crm_search_text(name, partnership_type, stage, priority, strategic_rationale, commercial_model, status_notes)
     )
   )
   WHERE archived_at IS NULL;
@@ -104,7 +104,7 @@ CREATE INDEX idx_partnership_services_search_fts
   USING GIN (
     to_tsvector(
       'english',
-      picardo_search_text(name, service_type, status, clinical_use, data_modalities::text)
+      crm_search_text(name, service_type, status, clinical_use, data_modalities::text)
     )
   )
   WHERE archived_at IS NULL;
@@ -114,7 +114,7 @@ CREATE INDEX idx_partnership_integrations_search_fts
   USING GIN (
     to_tsvector(
       'english',
-      picardo_search_text(integration_type, status, sync_direction, data_formats::text, notes)
+      crm_search_text(integration_type, status, sync_direction, data_formats::text, notes)
     )
   )
   WHERE archived_at IS NULL;
@@ -227,7 +227,7 @@ AS $$
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
+          crm_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
         ),
         query.tsq,
         32
@@ -245,7 +245,7 @@ AS $$
       AND (filter_target_types IS NULL OR 'organization' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
+        crm_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
       ) @@ query.tsq
 
     UNION ALL
@@ -259,7 +259,7 @@ AS $$
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
+          crm_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
         ),
         query.tsq,
         32
@@ -277,7 +277,7 @@ AS $$
       AND (filter_target_types IS NULL OR 'person' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
+        crm_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
       ) @@ query.tsq
 
     UNION ALL
@@ -288,7 +288,7 @@ AS $$
       COALESCE(i.subject, i.type::text) AS title,
       concat_ws(' / ', i.type::text, i.direction::text, i.location) AS subtitle,
       i.occurred_at,
-      ts_rank_cd(to_tsvector('english', picardo_search_text(i.subject, left(i.body, 250000), i.location)), query.tsq, 32) AS rank,
+      ts_rank_cd(to_tsvector('english', crm_search_text(i.subject, left(i.body, 250000), i.location)), query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', i.subject, left(i.body, 250000), i.location),
@@ -300,7 +300,7 @@ AS $$
     CROSS JOIN query
     WHERE i.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'interaction' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(i.subject, left(i.body, 250000), i.location)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(i.subject, left(i.body, 250000), i.location)) @@ query.tsq
 
     UNION ALL
 
@@ -333,7 +333,7 @@ AS $$
       concat_ws(' / ', d.document_type, d.source_path) AS subtitle,
       COALESCE(d.occurred_at, d.authored_at, d.created_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)),
+        to_tsvector('english', crm_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)),
         query.tsq,
         32
       ) AS rank,
@@ -348,7 +348,7 @@ AS $$
     CROSS JOIN query
     WHERE d.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'document' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)) @@ query.tsq
 
     UNION ALL
 
@@ -358,7 +358,7 @@ AS $$
       COALESCE(an.title, an.kind::text) AS title,
       concat_ws(' / ', an.kind::text, an.model, an.model_version) AS subtitle,
       an.generated_at AS occurred_at,
-      ts_rank_cd(to_tsvector('english', picardo_search_text(an.title, left(an.content, 250000))), query.tsq, 32) AS rank,
+      ts_rank_cd(to_tsvector('english', crm_search_text(an.title, left(an.content, 250000))), query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', an.title, left(an.content, 250000)),
@@ -369,7 +369,7 @@ AS $$
     FROM ai_notes an
     CROSS JOIN query
     WHERE (filter_target_types IS NULL OR 'ai_note' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(an.title, left(an.content, 250000))) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(an.title, left(an.content, 250000))) @@ query.tsq
 
     UNION ALL
 
@@ -379,7 +379,7 @@ AS $$
       ef.key AS title,
       ef.subject_type::text AS subtitle,
       ef.observed_at AS occurred_at,
-      ts_rank_cd(to_tsvector('english', picardo_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))), query.tsq, 32) AS rank,
+      ts_rank_cd(to_tsvector('english', crm_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))), query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', ef.key, ef.value_text, left(ef.source_excerpt, 50000)),
@@ -390,7 +390,7 @@ AS $$
     FROM extracted_facts ef
     CROSS JOIN query
     WHERE (filter_target_types IS NULL OR 'extracted_fact' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))) @@ query.tsq
 
     UNION ALL
 
@@ -403,7 +403,7 @@ AS $$
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(
+          crm_search_text(
             orp.canonical_name,
             orp.website,
             orp.domain::text,
@@ -439,7 +439,7 @@ AS $$
     WHERE (filter_target_types IS NULL OR 'organization_research_profile' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(
+        crm_search_text(
           orp.canonical_name,
           orp.website,
           orp.domain::text,
@@ -467,7 +467,7 @@ AS $$
       concat_ws(' / ', p.partnership_type, p.stage, p.priority) AS subtitle,
       COALESCE(p.launched_at, p.signed_at, p.updated_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)),
+        to_tsvector('english', crm_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)),
         query.tsq,
         32
       ) AS rank,
@@ -482,7 +482,7 @@ AS $$
     CROSS JOIN query
     WHERE p.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)) @@ query.tsq
 
     UNION ALL
 
@@ -493,7 +493,7 @@ AS $$
       concat_ws(' / ', ps.service_type, ps.status) AS subtitle,
       ps.updated_at AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)),
+        to_tsvector('english', crm_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)),
         query.tsq,
         32
       ) AS rank,
@@ -508,7 +508,7 @@ AS $$
     CROSS JOIN query
     WHERE ps.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership_service' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)) @@ query.tsq
 
     UNION ALL
 
@@ -519,7 +519,7 @@ AS $$
       concat_ws(' / ', pi.status, pi.sync_direction) AS subtitle,
       COALESCE(pi.last_sync_at, pi.updated_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)),
+        to_tsvector('english', crm_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)),
         query.tsq,
         32
       ) AS rank,
@@ -534,7 +534,7 @@ AS $$
     CROSS JOIN query
     WHERE pi.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership_integration' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)) @@ query.tsq
   )
   SELECT
     ranked.target_type,
@@ -572,4 +572,4 @@ DROP INDEX IF EXISTS idx_interactions_search_fts;
 DROP INDEX IF EXISTS idx_people_search_fts;
 DROP INDEX IF EXISTS idx_organizations_search_fts;
 
-DROP FUNCTION IF EXISTS picardo_search_text(text[]);
+DROP FUNCTION IF EXISTS crm_search_text(text[]);

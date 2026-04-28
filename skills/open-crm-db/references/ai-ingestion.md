@@ -1,18 +1,18 @@
-# Picardo Internal DB — AI Ingestion Spec
+# open-crm-db — AI Ingestion Spec
 
-This is the contract an AI agent reads in order to populate Picardo's internal
-headless CRM safely. It pairs with `schema.md`.
+This is the contract an AI agent reads in order to populate the operating
+organization's internal headless CRM safely. It pairs with `schema.md`.
 
 ## Purpose
 
-The Picardo Internal DB is the single source of truth for **every interaction
-the company has with another company or person**, durable company knowledge
-artifacts, and internal operating tasks: calls, meetings, emails, messages,
-internal notes, memos, research notes, meeting-note documents, strategy
-documents, tasks, comments, and the notes/summaries derived from them. An AI
-agent is expected to keep this database fresh by ingesting from upstream
-sources (Gmail, Google Calendar, Zoom, Google Meet, Linear, manual notes, repo
-docs, etc.) and writing structured rows.
+The open-crm-db is the single source of truth for **every interaction the
+operating organization has with another organization or person**, durable
+knowledge artifacts, and internal operating tasks: calls, meetings, emails,
+messages, internal notes, memos, research notes, meeting-note documents,
+strategy documents, tasks, comments, and the notes/summaries derived from
+them. An AI agent is expected to keep this database fresh by ingesting from
+upstream sources (mail, calendar, video conferencing, task trackers, manual
+notes, repo docs, etc.) and writing structured rows.
 
 The schema is normalized: organizations, people, affiliations, interactions,
 participants, transcripts, documents, document links, AI notes, extracted
@@ -29,8 +29,8 @@ DATABASE_URL=postgres://user:password@host:port/database
 
 Optional environment variables:
 
-- `PICARDO_DB_MIGRATIONS_TABLE` — defaults to `pgmigrations`
-- `PICARDO_DB_MIGRATIONS_SCHEMA` — defaults to `public`
+- `OPEN_CRM_DB_MIGRATIONS_TABLE` — defaults to `pgmigrations`
+- `OPEN_CRM_DB_MIGRATIONS_SCHEMA` — defaults to `public`
 
 Schema changes must go through a SQL migration in `migrations/`. The agent
 **must not** issue `ALTER TABLE` or `CREATE TABLE` against a live database.
@@ -46,7 +46,6 @@ Seeded slugs (safe to assume present):
 - `google_calendar`
 - `google_meet`
 - `zoom`
-- `linear`
 
 If you ingest from a source that isn't in the table yet, insert it first with
 `INSERT ... ON CONFLICT (slug) DO NOTHING` and a meaningful `name` and
@@ -65,7 +64,7 @@ match**. In order of preference:
 If you create a new entity, immediately record the originating external ID in
 `external_identities` so the next ingestion run finds it.
 
-Internal Picardo operators are **not** CRM `people`. Use `team_members` for
+Internal operators are **not** CRM `people`. Use `team_members` for
 task creators, assignees, delegates, project leads, and comment authors. Use
 `people` only for external contacts and counterparties.
 
@@ -92,17 +91,17 @@ repo document should produce zero duplicate rows.
 
 For task imports, use the source-backed unique indexes on `team_members`,
 `task_teams`, `task_statuses`, `task_projects`, `tasks`, `task_comments`, and
-`task_attachments`. For Linear issues, store the human-readable identifier
-(`PIC-226`) in `tasks.source_identifier` and the upstream stable ID in
+`task_attachments`. Store any human-readable upstream identifier (e.g.
+`ENG-226`) in `tasks.source_identifier` and the upstream stable ID in
 `tasks.source_external_id` when the source exposes it.
 
 ## Recording a task
 
-Use `tasks` for internal operating work such as imported Linear issues.
-Run `pnpm import:linear` to inventory Linear without writes, and
-`pnpm import:linear --apply` to write the import idempotently.
+Use `tasks` for internal operating work, optionally imported from an external
+task tracker.
 
-1. Resolve / create the source in `sources` (`linear` for Linear imports).
+1. Resolve / create the source in `sources` (e.g. an external task tracker's
+   slug).
 2. Resolve / create team members in `team_members` by
    `(source_id, source_external_id)` or by `email`.
 3. Upsert the team in `task_teams`.
@@ -113,8 +112,8 @@ Run `pnpm import:linear` to inventory Linear without writes, and
 6. Upsert the task in `tasks` with title, description, status, priority,
    project, creator, assignee, due date, lifecycle timestamps, source URL, and
    source identifiers.
-7. Insert Linear labels as `tags` and attach them to `tasks` through
-   `taggings` with `target_type = 'task'`.
+7. Insert task labels as `tags` and attach them to `tasks` through `taggings`
+   with `target_type = 'task'`.
 8. Upsert comments into `task_comments`, attachments/link metadata into
    `task_attachments`, and task relationships into `task_relations`.
 

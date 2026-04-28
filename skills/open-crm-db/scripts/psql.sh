@@ -3,7 +3,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-CREDENTIALS="${PICARDO_DB_CREDENTIALS:-${SKILL_DIR}/references/credentials.env}"
+CREDENTIALS="${OPEN_CRM_DB_CREDENTIALS:-${SKILL_DIR}/references/credentials.env}"
 
 if [[ -f "${CREDENTIALS}" ]]; then
   set -a

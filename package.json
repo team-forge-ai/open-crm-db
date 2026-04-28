@@ -1,16 +1,33 @@
 {
-  "name": "@team-forge-ai/picardo-internal-db",
+  "name": "@team-forge-ai/open-crm-db",
   "version": "0.1.0",
   "private": true,
-  "description": "Picardo internal database — headless CRM CLI and SQL migrations",
+  "description": "Open headless CRM / internal knowledge database — Postgres schema, SQL migrations, and a small TypeScript CLI.",
   "type": "module",
-  "license": "UNLICENSED",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/team-forge-ai/open-crm-db.git"
+  },
+  "homepage": "https://github.com/team-forge-ai/open-crm-db#readme",
+  "bugs": {
+    "url": "https://github.com/team-forge-ai/open-crm-db/issues"
+  },
+  "keywords": [
+    "crm",
+    "postgres",
+    "migrations",
+    "schema",
+    "embeddings",
+    "pgvector",
+    "headless"
+  ],
   "packageManager": "pnpm@10.30.3",
   "engines": {
     "node": ">=20"
   },
   "bin": {
-    "picardo-db": "./dist/cli.js"
+    "open-crm-db": "./dist/cli.js"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -18,6 +35,7 @@
     "dist",
     "migrations",
     "templates",
+    "LICENSE",
     "README.md"
   ],
   "scripts": {
@@ -29,10 +47,8 @@
     "format:check": "prettier --check .",
     "test": "vitest run",
     "test:watch": "vitest",
-    "enrich:crm": "tsx src/cli.ts enrich",
     "export:graph": "node scripts/export-graph.mjs",
-    "import:linear": "tsx src/cli.ts linear import",
-    "picardo-db": "tsx src/cli.ts",
+    "open-crm-db": "tsx src/cli.ts",
     "migrate:up": "tsx src/cli.ts migrate up",
     "migrate:down": "tsx src/cli.ts migrate down",
     "migrate:status": "tsx src/cli.ts migrate status",
@@ -40,13 +56,10 @@
     "info": "tsx src/cli.ts info"
   },
   "dependencies": {
-    "@ai-sdk/perplexity": "^3.0.29",
-    "ai": "^6.0.168",
     "commander": "^12.1.0",
     "dotenv": "^16.4.5",
     "node-pg-migrate": "^7.9.1",
-    "pg": "^8.13.1",
-    "zod": "^4.3.6"
+    "pg": "^8.13.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

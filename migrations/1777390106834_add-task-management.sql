@@ -1,13 +1,9 @@
 -- Up Migration
 
-INSERT INTO sources (slug, name, description)
-VALUES ('linear', 'Linear', 'Tasks, projects, comments, labels, and workflow states sourced from Linear.')
-ON CONFLICT (slug) DO NOTHING;
-
 -- -----------------------------------------------------------------------------
 -- Internal users
--- Picardo operators and system actors. Keep these separate from CRM people,
--- which are external contacts and counterparties.
+-- Operators and system actors that act inside this organization. Keep these
+-- separate from CRM people, which are external contacts and counterparties.
 -- -----------------------------------------------------------------------------
 CREATE TABLE internal_users (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -40,11 +36,12 @@ CREATE INDEX idx_internal_users_name_trgm
   WHERE archived_at IS NULL;
 CREATE TRIGGER trg_internal_users_updated_at
   BEFORE UPDATE ON internal_users
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Task teams and workflow states
--- Linear workflow states are team-scoped data, not enums.
+-- Workflow states are team-scoped data, not enums, so each team can define
+-- its own pipeline (for example: Backlog / In Progress / Review / Done).
 -- -----------------------------------------------------------------------------
 CREATE TABLE task_teams (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -75,7 +72,7 @@ CREATE INDEX idx_task_teams_source   ON task_teams (source_id);
 CREATE INDEX idx_task_teams_metadata ON task_teams USING GIN (metadata);
 CREATE TRIGGER trg_task_teams_updated_at
   BEFORE UPDATE ON task_teams
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE task_statuses (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -106,12 +103,12 @@ CREATE INDEX idx_task_statuses_source    ON task_statuses (source_id);
 CREATE INDEX idx_task_statuses_metadata  ON task_statuses USING GIN (metadata);
 CREATE TRIGGER trg_task_statuses_updated_at
   BEFORE UPDATE ON task_statuses
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Task projects
--- Linear projects are operating containers for tasks. Milestones and cycles are
--- intentionally deferred until Picardo actually uses them.
+-- Projects are operating containers for tasks. Milestones and cycles are
+-- intentionally deferred until a concrete need appears.
 -- -----------------------------------------------------------------------------
 CREATE TABLE task_projects (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -156,7 +153,7 @@ CREATE INDEX idx_task_projects_metadata ON task_projects USING GIN (metadata);
 CREATE INDEX idx_task_projects_search_fts
   ON task_projects
   USING GIN (
-    to_tsvector('english', picardo_search_text(name, summary, description, status_name, priority_label))
+    to_tsvector('english', crm_search_text(name, summary, description, status_name, priority_label))
   )
   WHERE archived_at IS NULL;
 CREATE INDEX idx_task_projects_name_trgm
@@ -165,7 +162,7 @@ CREATE INDEX idx_task_projects_name_trgm
   WHERE archived_at IS NULL;
 CREATE TRIGGER trg_task_projects_updated_at
   BEFORE UPDATE ON task_projects
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE task_project_teams (
   project_id uuid NOT NULL REFERENCES task_projects(id) ON DELETE CASCADE,
@@ -177,7 +174,8 @@ CREATE INDEX idx_task_project_teams_team ON task_project_teams (team_id);
 
 -- -----------------------------------------------------------------------------
 -- Tasks
--- Imported Linear issues and future Picardo-owned operational work.
+-- Generic work items. Each task belongs to exactly one task team and may
+-- optionally belong to a project, a parent task, an assignee, etc.
 -- -----------------------------------------------------------------------------
 CREATE TABLE tasks (
   id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -248,7 +246,7 @@ CREATE INDEX idx_tasks_metadata          ON tasks USING GIN (metadata);
 CREATE INDEX idx_tasks_search_fts
   ON tasks
   USING GIN (
-    to_tsvector('english', picardo_search_text(title, left(description, 250000), source_identifier, priority_label, git_branch_name))
+    to_tsvector('english', crm_search_text(title, left(description, 250000), source_identifier, priority_label, git_branch_name))
   )
   WHERE archived_at IS NULL;
 CREATE INDEX idx_tasks_title_trgm
@@ -257,7 +255,7 @@ CREATE INDEX idx_tasks_title_trgm
   WHERE archived_at IS NULL;
 CREATE TRIGGER trg_tasks_updated_at
   BEFORE UPDATE ON tasks
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE task_comments (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -295,7 +293,7 @@ CREATE INDEX idx_task_comments_search_fts
   WHERE archived_at IS NULL;
 CREATE TRIGGER trg_task_comments_updated_at
   BEFORE UPDATE ON task_comments
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE task_attachments (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -319,7 +317,7 @@ CREATE INDEX idx_task_attachments_task     ON task_attachments (task_id);
 CREATE INDEX idx_task_attachments_metadata ON task_attachments USING GIN (metadata);
 CREATE TRIGGER trg_task_attachments_updated_at
   BEFORE UPDATE ON task_attachments
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE task_relations (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -342,9 +340,9 @@ CREATE INDEX idx_task_relations_type     ON task_relations (relation_type);
 CREATE INDEX idx_task_relations_metadata ON task_relations USING GIN (metadata);
 CREATE TRIGGER trg_task_relations_updated_at
   BEFORE UPDATE ON task_relations
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
--- Linear issue labels attach to tasks through the existing tag system.
+-- Task labels attach to tasks through the existing tag system.
 ALTER TABLE taggings
   DROP CONSTRAINT IF EXISTS ck_taggings_target_type;
 ALTER TABLE taggings
@@ -416,5 +414,3 @@ DROP TABLE IF EXISTS task_projects;
 DROP TABLE IF EXISTS task_statuses;
 DROP TABLE IF EXISTS task_teams;
 DROP TABLE IF EXISTS internal_users;
-
-DELETE FROM sources WHERE slug = 'linear';

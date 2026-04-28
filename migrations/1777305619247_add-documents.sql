@@ -33,7 +33,7 @@ CREATE INDEX idx_documents_source_path   ON documents (source_path);
 CREATE INDEX idx_documents_metadata      ON documents USING GIN (metadata);
 CREATE TRIGGER trg_documents_updated_at
   BEFORE UPDATE ON documents
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Document links
@@ -57,7 +57,7 @@ CREATE INDEX idx_document_people_person   ON document_people (person_id);
 CREATE INDEX idx_document_people_role     ON document_people (role);
 CREATE TRIGGER trg_document_people_updated_at
   BEFORE UPDATE ON document_people
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE document_organizations (
   id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -75,7 +75,7 @@ CREATE INDEX idx_document_organizations_org      ON document_organizations (orga
 CREATE INDEX idx_document_organizations_role     ON document_organizations (role);
 CREATE TRIGGER trg_document_organizations_updated_at
   BEFORE UPDATE ON document_organizations
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE document_interactions (
   id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -93,7 +93,7 @@ CREATE INDEX idx_document_interactions_interaction ON document_interactions (int
 CREATE INDEX idx_document_interactions_role        ON document_interactions (role);
 CREATE TRIGGER trg_document_interactions_updated_at
   BEFORE UPDATE ON document_interactions
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- Let AI notes and extracted facts cite documents directly as provenance.
 ALTER TABLE ai_notes

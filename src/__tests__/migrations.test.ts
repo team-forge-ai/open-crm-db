@@ -51,13 +51,13 @@ describe('parseMigrationFilename', () => {
 describe('listMigrationFiles', () => {
   it('returns [] for missing directories', async () => {
     const files = await listMigrationFiles(
-      path.join(os.tmpdir(), `picardo-not-here-${Date.now()}`),
+      path.join(os.tmpdir(), `open-crm-db-not-here-${Date.now()}`),
     )
     expect(files).toEqual([])
   })
 
   it('returns sorted parsed migrations from a real directory', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'picardo-list-'))
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'open-crm-db-list-'))
     await fs.writeFile(path.join(dir, 'README.md'), '# ignore me')
     await fs.writeFile(path.join(dir, '200_b-second.sql'), '-- Up Migration')
     await fs.writeFile(path.join(dir, '100_a-first.sql'), '-- Up Migration')
@@ -87,14 +87,14 @@ describe('diffMigrations', () => {
 
 describe('readMigrationTemplate', () => {
   it('reads a real template file', async () => {
-    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'picardo-tpl-'))
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'open-crm-db-tpl-'))
     const tpl = path.join(dir, 'migration.sql')
     await fs.writeFile(tpl, '-- Custom Up\n-- Custom Down\n')
     expect(await readMigrationTemplate(tpl)).toContain('Custom Up')
   })
 
   it('falls back to a default for missing templates', async () => {
-    const tpl = path.join(os.tmpdir(), `picardo-tpl-missing-${Date.now()}.sql`)
+    const tpl = path.join(os.tmpdir(), `open-crm-db-tpl-missing-${Date.now()}.sql`)
     expect(await readMigrationTemplate(tpl)).toContain('-- Up Migration')
   })
 })
@@ -102,7 +102,7 @@ describe('readMigrationTemplate', () => {
 describe('createMigration', () => {
   let workdir: string
   beforeEach(async () => {
-    workdir = await fs.mkdtemp(path.join(os.tmpdir(), 'picardo-create-'))
+    workdir = await fs.mkdtemp(path.join(os.tmpdir(), 'open-crm-db-create-'))
   })
   afterEach(async () => {
     await fs.rm(workdir, { recursive: true, force: true })

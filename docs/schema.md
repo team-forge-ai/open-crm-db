@@ -1,4 +1,4 @@
-# Picardo Internal DB — Schema Reference
+# open-crm-db — Schema Reference
 
 Entity-level reference for the headless-CRM schema. Keep this file aligned with
 the generated `schema.sql` snapshot and the SQL migrations that produce it.
@@ -7,7 +7,7 @@ the generated `schema.sql` snapshot and the SQL migrations that produce it.
 
 - All primary keys are `uuid` with `DEFAULT gen_random_uuid()`.
 - All tables have `created_at` and `updated_at` (`timestamptz`, `DEFAULT NOW()`).
-  A shared trigger function `picardo_set_updated_at()` keeps `updated_at` fresh.
+  A shared trigger function `crm_set_updated_at()` keeps `updated_at` fresh.
 - Soft delete is expressed via `archived_at timestamptz NULL`. Hard deletes are
   reserved for genuinely junk data.
 - All timestamps are `timestamptz`. Never use plain `timestamp`.
@@ -35,10 +35,10 @@ the generated `schema.sql` snapshot and the SQL migrations that produce it.
 
 ### `team_members`
 
-Picardo operators and system actors, such as Alex, Alana, and imported bot
+internal operators and system actors, imported bot
 actors. This table is intentionally separate from `people`: `people` is for
 external CRM contacts and counterparties, while `team_members` is for owners,
-assignees, creators, project leads, and comment authors inside Picardo's
+assignees, creators, project leads, and comment authors inside the operating organization's
 operating layer.
 
 Required identity fields are `name` and `email`; `title` is optional.
@@ -58,8 +58,8 @@ HubSpot, Google Contacts, etc.
 Structured public research profile for an organization, usually produced by
 AI-assisted web enrichment. This table keeps CRM intelligence queryable without
 overloading `organizations.metadata`: public canonical identity, one-line
-description, category, healthcare relevance, partnership fit, offerings,
-likely Picardo use cases, integration/compliance signals, key public people,
+description, category, optional category-specific fields, partnership fit, offerings,
+likely use cases, integration/compliance signals, key public people,
 suggested tags, review flags, source URLs, and the raw enrichment payload.
 
 `(organization_id, prompt_fingerprint)` is unique so rerunning the same
@@ -217,52 +217,49 @@ partnership, service, and integration metadata for drill-down views.
 
 ## Tasks
 
-Task management is modeled as an internal operating layer. It imports Linear
-faithfully where the model is useful, while avoiding unused Linear constructs
-until Picardo actually needs them.
+Task management is modeled as an internal operating layer using a generic
+work-item model: teams, statuses, projects, tasks, comments, attachments,
+and directed task relations.
 
 ### `task_teams`
 
-Work containers for task workflows. Linear teams map here. `key` stores the
-short task prefix such as `PIC`, while `name` stores the display name such as
-`Picardo`. Teams are source-backed so imports can upsert by
-`(source_id, source_external_id)`.
+Work containers for task workflows. `key` stores a short task prefix such
+as `ENG`, while `name` stores the display name. Teams are source-backed so
+imports from external trackers can upsert by `(source_id, source_external_id)`.
 
 ### `task_statuses`
 
 Team-scoped workflow states such as `Backlog`, `Todo`, `In Progress`,
 `In Review`, `Done`, `Canceled`, and `Duplicate`.
 
-`status_type` stores the normalized Linear category: `backlog`, `unstarted`,
+`status_type` is a normalized workflow category: `backlog`, `unstarted`,
 `started`, `completed`, or `canceled`. Keep statuses as rows, not enums,
 because workflows are team-specific and may evolve independently.
 
 ### `task_projects`
 
-Operating project containers such as `Product`, `Marketing & Launch`,
-`Strategy`, `HIPAA Compliance`, `Operations`, `Partnerships`,
-`Corporate & Legal Setup`, `GTM - Healthshare / Enterprise`, and `Payments`.
+Operating project containers, e.g. `Product`, `Marketing`, `Strategy`,
+`Operations`, or `Partnerships`. Names are organization-specific.
 
 Projects store status, priority, start/target dates, lifecycle timestamps, a
-lead team member, source URL, and metadata. Linear milestones and cycles are
-not modeled yet because Picardo's current Linear workspace does not use them.
+lead team member, source URL, and metadata. Milestones and cycles are not
+modeled by default; add them as a follow-up migration if your workflow needs
+them.
 
 ### `task_project_teams`
 
-Join table between task projects and task teams. Picardo currently has one
-Linear team, but Linear projects can belong to multiple teams, so the schema
-keeps that relationship normalized.
+Join table between task projects and task teams. Projects can belong to
+multiple teams, so the schema keeps that relationship normalized.
 
 ### `tasks`
 
-Imported Linear issues and future Picardo-owned operational work. Core fields
-include team, status, project, parent task, creator, assignee, delegate, title,
-description, priority, estimate, due date, lifecycle timestamps, source
-timestamps, Linear identifier, source URL, git branch name, SLA fields, and
-metadata.
+Generic operational work items. Core fields include team, status, project,
+parent task, creator, assignee, delegate, title, description, priority,
+estimate, due date, lifecycle timestamps, source timestamps, source
+identifier, source URL, git branch name, SLA fields, and metadata.
 
 `source_external_id` is the upstream stable ID when available.
-`source_identifier` stores human-readable identifiers such as `PIC-226`, and
+`source_identifier` stores human-readable identifiers such as `ENG-226`, and
 `source_number` stores the numeric issue number. Team members, not CRM
 `people`, own creator/assignee/delegate relationships.
 
@@ -271,7 +268,7 @@ metadata.
 Threaded task comments in Markdown or plain text. Comments link to
 `team_members` for authors and preserve source IDs plus source-created /
 source-updated timestamps for idempotent imports. Use this table for imported
-Linear comments rather than storing comment bodies inside `tasks.metadata`.
+comments rather than storing comment bodies inside `tasks.metadata`.
 
 ### `task_attachments`
 
@@ -282,9 +279,9 @@ contents are not downloaded into Postgres by default.
 ### `task_relations`
 
 Directed relationships between tasks. `relation_type` is one of `blocks`,
-`blocked_by`, `related`, or `duplicate`. Imports may either store Linear's
-reported direction directly or normalize `blocked_by` into a reverse `blocks`
-edge, but should be consistent within a source import.
+`blocked_by`, `related`, or `duplicate`. Imports may either store the upstream
+system's reported direction directly or normalize `blocked_by` into a reverse
+`blocks` edge, but should be consistent within a source import.
 
 ## Interactions
 
@@ -381,9 +378,8 @@ coverage should come from chunking content into `semantic_embeddings`.
 `{organization, person, interaction, document, partnership, task}` with a
 CHECK constraint, and `(tag_id, target_type, target_id)` is unique.
 
-Linear issue labels attach to `tasks` using existing `tags` / `taggings`.
-Store Linear label color in `tags.color` and label description in
-`tags.description`.
+Task labels attach to `tasks` using the existing `tags` / `taggings` system.
+Store label color in `tags.color` and label description in `tags.description`.
 
 ### `relationship_edges`
 

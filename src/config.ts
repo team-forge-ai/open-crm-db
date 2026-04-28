@@ -3,10 +3,10 @@ import { fileURLToPath } from 'node:url'
 import dotenv from 'dotenv'
 
 /**
- * Resolved configuration for the picardo-db CLI.
+ * Resolved configuration for the open-crm-db CLI.
  * All operational values are derived from environment variables.
  */
-export interface PicardoDbConfig {
+export interface OpenCrmDbConfig {
   /** Postgres connection string. */
   databaseUrl: string
   /** Absolute path to the SQL migrations directory. */
@@ -44,7 +44,7 @@ export function findRepoRoot(): string {
 /**
  * Load and validate config. Throws if DATABASE_URL is required but missing.
  */
-export function loadConfig(options: ConfigOptions = {}): PicardoDbConfig {
+export function loadConfig(options: ConfigOptions = {}): OpenCrmDbConfig {
   if (!options.skipDotenv) {
     dotenv.config()
   }
@@ -63,8 +63,8 @@ export function loadConfig(options: ConfigOptions = {}): PicardoDbConfig {
     databaseUrl,
     migrationsDir: path.join(repoRoot, 'migrations'),
     migrationTemplate: path.join(repoRoot, 'templates', 'migration.sql'),
-    migrationsTable: process.env.PICARDO_DB_MIGRATIONS_TABLE || 'pgmigrations',
-    migrationsSchema: process.env.PICARDO_DB_MIGRATIONS_SCHEMA || 'public',
+    migrationsTable: process.env.OPEN_CRM_DB_MIGRATIONS_TABLE || 'pgmigrations',
+    migrationsSchema: process.env.OPEN_CRM_DB_MIGRATIONS_SCHEMA || 'public',
     schemaDumpPath: resolveSchemaDumpPath(repoRoot),
   }
 }
@@ -76,7 +76,7 @@ export function loadConfig(options: ConfigOptions = {}): PicardoDbConfig {
 export function loadPaths(
   options: Pick<ConfigOptions, 'repoRoot' | 'skipDotenv'> = {},
 ): Pick<
-  PicardoDbConfig,
+  OpenCrmDbConfig,
   | 'migrationsDir'
   | 'migrationTemplate'
   | 'migrationsTable'
@@ -90,14 +90,14 @@ export function loadPaths(
   return {
     migrationsDir: path.join(repoRoot, 'migrations'),
     migrationTemplate: path.join(repoRoot, 'templates', 'migration.sql'),
-    migrationsTable: process.env.PICARDO_DB_MIGRATIONS_TABLE || 'pgmigrations',
-    migrationsSchema: process.env.PICARDO_DB_MIGRATIONS_SCHEMA || 'public',
+    migrationsTable: process.env.OPEN_CRM_DB_MIGRATIONS_TABLE || 'pgmigrations',
+    migrationsSchema: process.env.OPEN_CRM_DB_MIGRATIONS_SCHEMA || 'public',
     schemaDumpPath: resolveSchemaDumpPath(repoRoot),
   }
 }
 
 function resolveSchemaDumpPath(repoRoot: string): string {
-  const configured = process.env.PICARDO_DB_SCHEMA_DUMP_PATH
+  const configured = process.env.OPEN_CRM_DB_SCHEMA_DUMP_PATH
   if (!configured) {
     return path.join(repoRoot, 'schema.sql')
   }

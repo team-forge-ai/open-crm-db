@@ -27,10 +27,10 @@ describe('buildPgDumpConnectionEnv', () => {
   it('maps a postgres URL into pg_dump environment variables', () => {
     expect(
       buildPgDumpConnectionEnv(
-        'postgres://user:p%40ss@example.com:5433/picardo?sslmode=require',
+        'postgres://user:p%40ss@example.com:5433/crm?sslmode=require',
       ),
     ).toEqual({
-      PGDATABASE: 'picardo',
+      PGDATABASE: 'crm',
       PGHOST: 'example.com',
       PGPASSWORD: 'p@ss',
       PGPORT: '5433',
@@ -40,8 +40,8 @@ describe('buildPgDumpConnectionEnv', () => {
   })
 
   it('allows local URLs to fall back to the current OS user', () => {
-    expect(buildPgDumpConnectionEnv('postgres://localhost/picardo')).toEqual({
-      PGDATABASE: 'picardo',
+    expect(buildPgDumpConnectionEnv('postgres://localhost/crm')).toEqual({
+      PGDATABASE: 'crm',
       PGHOST: 'localhost',
     })
   })

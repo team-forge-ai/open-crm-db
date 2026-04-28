@@ -41,7 +41,7 @@ CREATE INDEX idx_organization_research_profiles_researched_at
 CREATE TRIGGER trg_organization_research_profiles_updated_at
   BEFORE UPDATE ON organization_research_profiles
   FOR EACH ROW
-  EXECUTE FUNCTION picardo_set_updated_at();
+  EXECUTE FUNCTION crm_set_updated_at();
 
 -- Down Migration
 DROP TABLE organization_research_profiles;

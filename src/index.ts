@@ -4,7 +4,7 @@ export {
   loadConfig,
   loadPaths,
   findRepoRoot,
-  type PicardoDbConfig,
+  type OpenCrmDbConfig,
   type ConfigOptions,
 } from './config.js'
 

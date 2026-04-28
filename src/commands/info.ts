@@ -1,14 +1,16 @@
 import path from 'node:path'
 import { loadPaths } from '../config.js'
 
-const HELP_TEXT = `Picardo Internal DB
-===================
+const HELP_TEXT = `open-crm-db
+===========
 
 Purpose
 -------
-A small, headless TypeScript CLI that owns Postgres migrations for Picardo's
-internal headless CRM. The database stores every interaction the company has
-with another company or person — including raw call transcripts and AI notes.
+A small, headless TypeScript CLI that owns Postgres migrations for an open
+internal CRM / knowledge database. The schema records organizations, people,
+interactions (calls, meetings, emails, messages, notes), call transcripts,
+AI-derived notes and extracted facts, documents, tags, partnerships, tasks,
+semantic embeddings, and provenance metadata.
 
 Connection
 ----------
@@ -18,16 +20,16 @@ Set DATABASE_URL in the environment (or in a local .env file). Format:
 
 For local development:
 
-    createdb picardo_internal_db_dev
-    export DATABASE_URL=postgres://localhost/picardo_internal_db_dev
+    createdb open_crm_db_dev
+    export DATABASE_URL=postgres://localhost/open_crm_db_dev
 
 Operational commands
 --------------------
-    picardo-db migrate up           Apply all pending migrations.
-    picardo-db migrate down         Revert the most recent migration.
-    picardo-db migrate status       Show applied vs pending migrations.
-    picardo-db migrate create NAME  Scaffold a new SQL migration.
-    picardo-db info                 Print this guidance.
+    open-crm-db migrate up           Apply all pending migrations.
+    open-crm-db migrate down         Revert the most recent migration.
+    open-crm-db migrate status       Show applied vs pending migrations.
+    open-crm-db migrate create NAME  Scaffold a new SQL migration.
+    open-crm-db info                 Print this guidance.
 
 Migration conventions
 ---------------------
@@ -42,17 +44,17 @@ Schema overview
 - people                      individuals
 - person_emails / phones      contact handles
 - affiliations                person <-> org over time, with role
-- external_identities         provenance / external IDs (Gmail, HubSpot, ...)
+- external_identities         provenance / external IDs
 - interactions                calls, meetings, emails, messages, notes
 - interaction_participants    interactions <-> people / orgs
 - call_transcripts            raw transcript + source metadata
-- ai_notes                    AI summaries / action items / coaching notes
+- ai_notes                    AI summaries / action items
 - extracted_facts             structured facts with confidence + source
 - tags / taggings             flexible polymorphic tagging
 - relationship_edges          flexible typed graph edges between entities
 
 For a deeper schema reference and AI ingestion contract, see
-docs/internal-db/schema.md and docs/internal-db/ai-ingestion.md in this repo.
+docs/schema.md and docs/ai-ingestion.md in this repo.
 `
 
 export function info(): void {

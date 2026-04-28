@@ -1,10 +1,11 @@
 -- Up Migration
 
 -- =============================================================================
--- Picardo Internal DB — initial schema
+-- open-crm-db — initial schema
 --
--- Headless CRM for Picardo. Stores companies and people the company interacts
--- with, the relationships between them, every interaction (call, meeting,
+-- Headless CRM. Stores companies and people the operating organization
+-- interacts with, the relationships between them, every interaction
+-- (call, meeting,
 -- email, message, note), and AI-derived artifacts (summaries, extracted facts,
 -- raw transcripts).
 --
@@ -23,7 +24,7 @@ CREATE EXTENSION IF NOT EXISTS citext;
 -- -----------------------------------------------------------------------------
 -- Shared: timestamp trigger
 -- -----------------------------------------------------------------------------
-CREATE OR REPLACE FUNCTION picardo_set_updated_at()
+CREATE OR REPLACE FUNCTION crm_set_updated_at()
 RETURNS TRIGGER AS $$
 BEGIN
   NEW.updated_at = NOW();
@@ -108,7 +109,7 @@ CREATE TABLE sources (
 );
 CREATE TRIGGER trg_sources_updated_at
   BEFORE UPDATE ON sources
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Organizations
@@ -137,7 +138,7 @@ CREATE INDEX idx_organizations_domain    ON organizations (domain);
 CREATE INDEX idx_organizations_archived  ON organizations (archived_at) WHERE archived_at IS NULL;
 CREATE TRIGGER trg_organizations_updated_at
   BEFORE UPDATE ON organizations
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- People
@@ -170,7 +171,7 @@ CREATE INDEX idx_people_primary_email  ON people (primary_email);
 CREATE INDEX idx_people_archived       ON people (archived_at) WHERE archived_at IS NULL;
 CREATE TRIGGER trg_people_updated_at
   BEFORE UPDATE ON people
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Person contact handles (multiple emails/phones per person)
@@ -190,7 +191,7 @@ CREATE TABLE person_emails (
 CREATE INDEX idx_person_emails_email ON person_emails (email);
 CREATE TRIGGER trg_person_emails_updated_at
   BEFORE UPDATE ON person_emails
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE person_phones (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -206,7 +207,7 @@ CREATE TABLE person_phones (
 CREATE INDEX idx_person_phones_phone ON person_phones (phone);
 CREATE TRIGGER trg_person_phones_updated_at
   BEFORE UPDATE ON person_phones
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Affiliations: person <-> organization over time
@@ -235,7 +236,7 @@ CREATE UNIQUE INDEX uq_affiliations_primary_per_person
   ON affiliations (person_id) WHERE is_primary;
 CREATE TRIGGER trg_affiliations_updated_at
   BEFORE UPDATE ON affiliations
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- External identities — provenance / dedupe keys for entities
@@ -258,7 +259,7 @@ CREATE TABLE external_identities (
 CREATE INDEX idx_external_identities_entity ON external_identities (entity_type, entity_id);
 CREATE TRIGGER trg_external_identities_updated_at
   BEFORE UPDATE ON external_identities
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Interactions
@@ -291,7 +292,7 @@ CREATE INDEX idx_interactions_occurred_at ON interactions (occurred_at DESC);
 CREATE INDEX idx_interactions_type        ON interactions (type);
 CREATE TRIGGER trg_interactions_updated_at
   BEFORE UPDATE ON interactions
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Interaction participants — who was involved
@@ -325,7 +326,7 @@ CREATE INDEX idx_interaction_participants_person ON interaction_participants (pe
 CREATE INDEX idx_interaction_participants_org    ON interaction_participants (organization_id);
 CREATE TRIGGER trg_interaction_participants_updated_at
   BEFORE UPDATE ON interaction_participants
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Call transcripts — raw transcript + source metadata, 1:1 with interaction
@@ -356,7 +357,7 @@ CREATE TABLE call_transcripts (
 CREATE INDEX idx_call_transcripts_interaction ON call_transcripts (interaction_id);
 CREATE TRIGGER trg_call_transcripts_updated_at
   BEFORE UPDATE ON call_transcripts
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- AI notes — model-generated artifacts attached to an interaction OR to an
@@ -391,7 +392,7 @@ CREATE INDEX idx_ai_notes_subject     ON ai_notes (subject_type, subject_id);
 CREATE INDEX idx_ai_notes_generated   ON ai_notes (generated_at DESC);
 CREATE TRIGGER trg_ai_notes_updated_at
   BEFORE UPDATE ON ai_notes
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Extracted facts — structured key/value statements derived by AI.
@@ -422,7 +423,7 @@ CREATE INDEX idx_extracted_facts_subject ON extracted_facts (subject_type, subje
 CREATE INDEX idx_extracted_facts_observed ON extracted_facts (observed_at DESC);
 CREATE TRIGGER trg_extracted_facts_updated_at
   BEFORE UPDATE ON extracted_facts
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Tags + polymorphic taggings
@@ -438,7 +439,7 @@ CREATE TABLE tags (
 );
 CREATE TRIGGER trg_tags_updated_at
   BEFORE UPDATE ON tags
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 CREATE TABLE taggings (
   id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -488,7 +489,7 @@ CREATE INDEX idx_rel_edges_source ON relationship_edges (source_entity_type, sou
 CREATE INDEX idx_rel_edges_target ON relationship_edges (target_entity_type, target_entity_id);
 CREATE TRIGGER trg_relationship_edges_updated_at
   BEFORE UPDATE ON relationship_edges
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 -- -----------------------------------------------------------------------------
 -- Seed: a couple of canonical sources so AI ingestion has stable slugs to
@@ -530,4 +531,4 @@ DROP TYPE IF EXISTS interaction_direction;
 DROP TYPE IF EXISTS interaction_type;
 DROP TYPE IF EXISTS entity_type;
 
-DROP FUNCTION IF EXISTS picardo_set_updated_at();
+DROP FUNCTION IF EXISTS crm_set_updated_at();

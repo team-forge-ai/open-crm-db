@@ -14,12 +14,12 @@ const outDir = path.resolve(
 )
 
 const psqlCandidates = [
-  path.join(repoRoot, 'skills', 'picardo-internal-db', 'scripts', 'psql.sh'),
+  path.join(repoRoot, 'skills', 'open-crm-db', 'scripts', 'psql.sh'),
   path.join(
     homedir(),
     '.codex',
     'skills',
-    'picardo-internal-db',
+    'open-crm-db',
     'scripts',
     'psql.sh',
   ),
@@ -464,7 +464,7 @@ function graphToGraphml(data) {
     '  <key id="archived" for="node" attr.name="archived" attr.type="boolean"/>',
     '  <key id="directed" for="edge" attr.name="directed" attr.type="boolean"/>',
     '  <key id="weight" for="edge" attr.name="weight" attr.type="double"/>',
-    '  <graph id="picardo-crm" edgedefault="undirected">',
+    '  <graph id="open-crm-db" edgedefault="undirected">',
   ]
 
   for (const node of data.nodes) {
@@ -511,7 +511,7 @@ function buildHtml(data) {
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Picardo CRM Graph</title>
+  <title>open-crm-db Graph</title>
   <style>
     :root {
       color-scheme: light;
@@ -674,7 +674,7 @@ function buildHtml(data) {
   <canvas id="graph"></canvas>
   <div class="topbar">
     <section class="panel brand">
-      <h1>Picardo CRM Graph</h1>
+      <h1>open-crm-db Graph</h1>
       <div class="stats" id="stats"></div>
     </section>
     <section class="panel controls">

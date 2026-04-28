@@ -33,7 +33,7 @@ CREATE INDEX idx_partnership_services_modalities  ON partnership_services USING 
 CREATE INDEX idx_partnership_services_metadata    ON partnership_services USING GIN (metadata);
 CREATE TRIGGER trg_partnership_services_updated_at
   BEFORE UPDATE ON partnership_services
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 
 -- Down Migration

@@ -2,8 +2,9 @@
 
 -- -----------------------------------------------------------------------------
 -- Partnership integrations
--- Technical integration state for a partnership/service. This captures the data
--- flow Picardo needs to import/export, without storing patient data here.
+-- Technical integration state for a partnership/service. This captures the
+-- data flow the operating organization needs to import/export, without storing
+-- partner-managed business data here.
 -- -----------------------------------------------------------------------------
 CREATE TABLE partnership_integrations (
   id                 uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -39,7 +40,7 @@ CREATE INDEX idx_partnership_integrations_formats     ON partnership_integration
 CREATE INDEX idx_partnership_integrations_metadata    ON partnership_integrations USING GIN (metadata);
 CREATE TRIGGER trg_partnership_integrations_updated_at
   BEFORE UPDATE ON partnership_integrations
-  FOR EACH ROW EXECUTE PROCEDURE picardo_set_updated_at();
+  FOR EACH ROW EXECUTE PROCEDURE crm_set_updated_at();
 
 
 -- Down Migration

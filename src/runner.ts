@@ -1,5 +1,5 @@
 import runner from 'node-pg-migrate'
-import type { PicardoDbConfig } from './config.js'
+import type { OpenCrmDbConfig } from './config.js'
 import { dumpSchema } from './schema-dump.js'
 
 /**
@@ -8,7 +8,7 @@ import { dumpSchema } from './schema-dump.js'
  * later without scattering the config.
  */
 export async function runMigrations(params: {
-  config: PicardoDbConfig
+  config: OpenCrmDbConfig
   direction: 'up' | 'down'
   /** How many migrations to run. Defaults: up = all, down = 1. */
   count?: number

@@ -1,23 +1,39 @@
-# Picardo Internal DB
+# open-crm-db
 
-Headless TypeScript CLI that owns the schema and migrations for **Picardo's
-internal Postgres database** — a headless CRM that records every interaction
-the company has with another company or person, including raw call transcripts
-and AI-derived notes.
+> A small, generic, MIT-licensed Postgres schema and CLI for an open headless
+> internal CRM / knowledge database.
+
+`open-crm-db` is the schema layer for an internal AI-friendly knowledge base
+that records every interaction your organization has with another organization
+or person, the people and orgs themselves, the relationships between them, the
+documents and notes you accumulate, and the tasks/projects your team operates
+on top of all that.
 
 This repo is intentionally narrow:
 
 - the database schema (SQL migrations only)
-- a small CLI to apply / inspect / scaffold migrations
+- a small CLI to apply / inspect / scaffold migrations and to backfill local
+  semantic-search embeddings
 - documentation an AI agent can read to populate the database safely
 
 There is no web UI, no API server, and no application code beyond the CLI.
+
+## Who this is for
+
+- Teams who want a Postgres-native, headless CRM-style schema they can shape
+  to their own product instead of a closed SaaS.
+- Teams who want a single store for organizations, people, interactions,
+  documents, notes, facts, tasks, partnerships, and semantic embeddings that
+  AI agents can write to and search over.
+- Anyone who prefers SQL migrations + provenance metadata over an opinionated
+  ORM and a hosted control plane.
 
 ## Requirements
 
 - Node 20+
 - pnpm 10+
-- PostgreSQL 14+
+- PostgreSQL 14+ with the `pgcrypto`, `citext`, `pg_trgm`, and (for semantic
+  search) `vector` extensions
 
 ## Install
 
@@ -30,23 +46,19 @@ cp .env.example .env
 ## Commands
 
 ```sh
-pnpm picardo-db --help                    # full help
-pnpm picardo-db info                      # connection + schema guidance
-pnpm picardo-db migrate up                # apply all pending migrations
-pnpm picardo-db migrate up -n 1           # apply at most one
-pnpm picardo-db migrate down              # revert the most recent migration
-pnpm picardo-db migrate down -n 2         # revert the last two
-pnpm picardo-db migrate status            # applied vs pending
-pnpm picardo-db migrate create "add foo"  # scaffold a new SQL migration
-pnpm picardo-db embeddings backfill        # dry-run local semantic embedding backfill
-pnpm picardo-db embeddings backfill --apply # write local MLX embeddings
-pnpm enrich:crm --limit 5                 # dry-run public CRM enrichment
-pnpm enrich:crm --apply --limit 5         # write enrichment facts/notes
-pnpm import:linear                        # dry-run Linear task import
-pnpm import:linear --apply                # import Linear tasks into Postgres
+pnpm open-crm-db --help                    # full help
+pnpm open-crm-db info                      # connection + schema guidance
+pnpm open-crm-db migrate up                # apply all pending migrations
+pnpm open-crm-db migrate up -n 1           # apply at most one
+pnpm open-crm-db migrate down              # revert the most recent migration
+pnpm open-crm-db migrate down -n 2         # revert the last two
+pnpm open-crm-db migrate status            # applied vs pending
+pnpm open-crm-db migrate create "add foo"  # scaffold a new SQL migration
+pnpm open-crm-db embeddings backfill         # dry-run local semantic embedding backfill
+pnpm open-crm-db embeddings backfill --apply # write local MLX embeddings
 ```
 
-After `pnpm build`, the same CLI is available as `picardo-db` (via the `bin`
+After `pnpm build`, the same CLI is available as `open-crm-db` (via the `bin`
 entry in `package.json`).
 
 ## Project layout
@@ -62,8 +74,8 @@ src/                TypeScript source for the CLI
   __tests__/        Vitest unit tests
 migrations/         SQL migrations applied in timestamp order
 templates/          Migration template (`-- Up Migration` / `-- Down Migration`)
-docs/internal-db/   plan / status / schema / ai-ingestion / final-report
-skills/             self-contained local AI skill for safe CRM operations
+docs/               schema reference + AI ingestion contract
+skills/             optional self-contained local AI skill for safe operations
 ```
 
 ## Migrations
@@ -81,39 +93,19 @@ skills/             self-contained local AI skill for safe CRM operations
   ```
 
 - Tracking table: `public.pgmigrations` (override with
-  `PICARDO_DB_MIGRATIONS_TABLE` / `PICARDO_DB_MIGRATIONS_SCHEMA`).
+  `OPEN_CRM_DB_MIGRATIONS_TABLE` / `OPEN_CRM_DB_MIGRATIONS_SCHEMA`).
 - After a successful `migrate up` or `migrate down`, the CLI refreshes
   `schema.sql` with `pg_dump --schema-only --no-owner --no-privileges`.
-  Override the output path with `PICARDO_DB_SCHEMA_DUMP_PATH`.
+  Override the output path with `OPEN_CRM_DB_SCHEMA_DUMP_PATH`.
 
 ## Schema
 
-See [`docs/internal-db/schema.md`](docs/internal-db/schema.md) for the full
-entity model and [`docs/internal-db/ai-ingestion.md`](docs/internal-db/ai-ingestion.md)
-for the contract an AI agent should follow when populating the database.
+See [`docs/schema.md`](docs/schema.md) for the full entity model and
+[`docs/ai-ingestion.md`](docs/ai-ingestion.md) for the contract an AI agent
+should follow when populating the database.
 
-`schema.sql` is a generated convenience snapshot of the current database schema.
-Schema changes should still be authored as timestamped SQL migrations.
-
-## CRM enrichment
-
-`picardo-db enrich` uses Perplexity's cheapest Sonar API model (`sonar`) through
-Vercel's AI SDK to fill blank public profile fields for `organizations` and
-`people`, then append provenance-backed `extracted_facts` and `ai_notes` when
-run with `--apply`.
-
-The command defaults to dry-run mode:
-
-```sh
-pnpm enrich:crm --limit 5
-pnpm enrich:crm --entity organizations --apply --limit 10
-```
-
-It loads `DATABASE_URL` from `.env` or the local skill credentials file, and
-loads `PERPLEXITY_API_KEY` from the environment or
-`~/repos/cursor-agent/.env`. The default search context is `low` to keep
-Perplexity request cost down; use `--search-context medium` or `high` only when
-you need broader source context.
+`schema.sql` is a generated convenience snapshot of the current database
+schema. Schema changes should still be authored as timestamped SQL migrations.
 
 Top-level entities:
 
@@ -132,6 +124,12 @@ Top-level entities:
 Convenience views:
 
 - `partner_integration_board` — kanban-oriented partner integration status
+
+The task schema (`tasks`, `task_teams`, `task_statuses`, `task_projects`,
+`task_comments`, `task_attachments`, `task_relations`) is a generic
+work-item model. It is not derived from any specific external task tracker,
+and you can populate it from whatever upstream system you choose by setting
+`source_id` and `source_external_id`.
 
 ## Search
 
@@ -154,8 +152,8 @@ select *
 from match_full_text_embeddings('genomics lab ordering', 10, array['document', 'ai_note']);
 ```
 
-Embeddings live in the chunk-level `semantic_embeddings` table and are searched
-with the SQL helper function:
+Embeddings live in the chunk-level `semantic_embeddings` table and are
+searched with the SQL helper function:
 
 ```sql
 select *
@@ -170,41 +168,51 @@ uv run --with mlx-embeddings --with mlx python -c "from mlx_embeddings import lo
 ```
 
 Use the same embedding model for indexing and querying. If you switch to a
-model with a different vector length, add a SQL migration for the new dimension
-instead of mixing dimensions in the same index.
+model with a different vector length, add a SQL migration for the new
+dimension instead of mixing dimensions in the same index.
 
-Backfill active CRM records into chunk-level embeddings with local MLX:
+Backfill active records into chunk-level embeddings with local MLX:
 
 ```sh
-pnpm picardo-db embeddings backfill
-pnpm picardo-db embeddings backfill --apply
-pnpm picardo-db embeddings backfill --apply --target-type document,call_transcript
+pnpm open-crm-db embeddings backfill
+pnpm open-crm-db embeddings backfill --apply
+pnpm open-crm-db embeddings backfill --apply --target-type document,call_transcript
 ```
 
 The command is dry-run by default, skips unchanged chunks by SHA-256 hash, and
 archives stale extra chunks when source content gets shorter. It loads
-`DATABASE_URL` from `.env` or the local skill credentials file, and sends source
-text only through the local MLX embedding runtime.
+`DATABASE_URL` from `.env` or the local skill credentials file, and sends
+source text only through the local MLX embedding runtime.
 
 Direct source-record full-text indexes intentionally cap very long text inputs
-to stay under Postgres' per-row `tsvector` limit. Full long-form coverage should
-come from chunking content into `semantic_embeddings`, then using semantic
-search, chunk-level full-text search, or both.
+to stay under Postgres' per-row `tsvector` limit. Full long-form coverage
+should come from chunking content into `semantic_embeddings`, then using
+semantic search, chunk-level full-text search, or both.
 
 ## Local AI skill
 
-This repo includes one reusable, self-contained local skill under
+This repo includes one optional, self-contained local skill under
 [`skills/`](skills/):
 
-- [`skills/picardo-internal-db`](skills/picardo-internal-db) bundles the
-  current schema snapshot, human-readable schema reference, ingestion contract,
-  sync workflows, and a `psql` helper for safely searching and syncing
+- [`skills/open-crm-db`](skills/open-crm-db) bundles the current schema
+  snapshot, human-readable schema reference, ingestion contract, sync
+  workflows, and a `psql` helper for safely searching and syncing
   transcripts, conversations, documents, notes, tasks, and extracted facts.
 
 Live database credentials are not committed. To enable the helper, copy
-`skills/picardo-internal-db/references/credentials.env.example` to
-`skills/picardo-internal-db/references/credentials.env`, fill in the Neon
+`skills/open-crm-db/references/credentials.env.example` to
+`skills/open-crm-db/references/credentials.env`, fill in your Postgres
 connection string, and keep that file local.
+
+## Privacy & safety
+
+- Treat `call_transcripts.raw_text`, `ai_notes.content`, and any extracted
+  PII as **highly sensitive**. Do not echo them verbatim into other systems.
+- The schema is designed for first-party use. Do not store regulated data
+  (PHI, payment data, etc.) here unless your deployment satisfies the
+  applicable regulatory requirements.
+- Never commit a populated `.env`, `credentials.env`, or any file containing
+  real connection strings or secrets.
 
 ## Development
 
@@ -218,13 +226,13 @@ pnpm build
 End-to-end against a disposable local DB:
 
 ```sh
-createdb picardo_internal_db_dev
-DATABASE_URL=postgres://localhost/picardo_internal_db_dev pnpm picardo-db migrate up
-DATABASE_URL=postgres://localhost/picardo_internal_db_dev pnpm picardo-db migrate status
-DATABASE_URL=postgres://localhost/picardo_internal_db_dev pnpm picardo-db migrate down
-dropdb picardo_internal_db_dev
+createdb open_crm_db_dev
+DATABASE_URL=postgres://localhost/open_crm_db_dev pnpm open-crm-db migrate up
+DATABASE_URL=postgres://localhost/open_crm_db_dev pnpm open-crm-db migrate status
+DATABASE_URL=postgres://localhost/open_crm_db_dev pnpm open-crm-db migrate down
+dropdb open_crm_db_dev
 ```
 
 ## License
 
-UNLICENSED — internal to Picardo / team-forge-ai.
+[MIT](LICENSE).

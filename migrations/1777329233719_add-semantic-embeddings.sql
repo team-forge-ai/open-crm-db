@@ -65,7 +65,7 @@ CREATE INDEX idx_semantic_embeddings_embedding_hnsw
 CREATE TRIGGER trg_semantic_embeddings_updated_at
   BEFORE UPDATE ON semantic_embeddings
   FOR EACH ROW
-  EXECUTE FUNCTION picardo_set_updated_at();
+  EXECUTE FUNCTION crm_set_updated_at();
 
 CREATE OR REPLACE FUNCTION match_semantic_embeddings(
   query_embedding vector(768),

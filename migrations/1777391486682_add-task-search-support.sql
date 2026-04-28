@@ -6,7 +6,7 @@ ALTER FUNCTION search_crm_full_text(text, integer, text[])
 CREATE INDEX idx_internal_users_search_fts
   ON internal_users
   USING GIN (
-    to_tsvector('english', picardo_search_text(name, title, email::text))
+    to_tsvector('english', crm_search_text(name, title, email::text))
   )
   WHERE archived_at IS NULL;
 
@@ -44,7 +44,7 @@ AS $$
       concat_ws(' / ', iu.title, iu.email::text) AS subtitle,
       iu.updated_at AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(iu.name, iu.title, iu.email::text)),
+        to_tsvector('english', crm_search_text(iu.name, iu.title, iu.email::text)),
         query.tsq,
         32
       ) AS rank,
@@ -59,7 +59,7 @@ AS $$
     CROSS JOIN query
     WHERE iu.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'internal_user' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(iu.name, iu.title, iu.email::text)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(iu.name, iu.title, iu.email::text)) @@ query.tsq
 
     UNION ALL
 
@@ -70,7 +70,7 @@ AS $$
       concat_ws(' / ', tp.status_name, tp.priority_label, tp.target_date::text) AS subtitle,
       COALESCE(tp.completed_at, tp.canceled_at, tp.started_at, tp.updated_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector('english', picardo_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)),
+        to_tsvector('english', crm_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)),
         query.tsq,
         32
       ) AS rank,
@@ -85,7 +85,7 @@ AS $$
     CROSS JOIN query
     WHERE tp.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'task_project' = ANY(filter_target_types))
-      AND to_tsvector('english', picardo_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)) @@ query.tsq
+      AND to_tsvector('english', crm_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)) @@ query.tsq
 
     UNION ALL
 
@@ -105,7 +105,7 @@ AS $$
       ts_rank_cd(
         to_tsvector(
           'english',
-          picardo_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
+          crm_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
         ),
         query.tsq,
         32
@@ -132,7 +132,7 @@ AS $$
       AND (filter_target_types IS NULL OR 'task' = ANY(filter_target_types))
       AND to_tsvector(
         'english',
-        picardo_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
+        crm_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
       ) @@ query.tsq
 
     UNION ALL
