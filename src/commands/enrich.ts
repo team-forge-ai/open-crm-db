@@ -291,6 +291,18 @@ async function enrichOrganizations(
       )
       const updates = organizationUpdates(candidate, enrichment)
       const facts = normalizeFacts(enrichment.facts)
+      const validation = validateOrganizationIdentity(
+        candidate,
+        enrichment,
+        facts,
+      )
+
+      if (!validation.valid) {
+        console.error(
+          `Skipping organization ${candidate.name}: ${validation.reason}`,
+        )
+        continue
+      }
 
       console.log(
         `${ctx.apply ? 'Applying' : 'Would enrich'} organization ${candidate.name}: ${describeOrganizationChanges(
@@ -377,6 +389,8 @@ Do not infer sensitive, private, or medical information.
 Prefer the organization's official website and credible company profile pages.
 Focus on CRM intelligence for Picardo, a healthcare company evaluating partnerships, services, integrations, and relationship context.
 If an official domain or website is provided, use it as the primary disambiguation clue.
+If public sources for that exact organization/domain are unavailable, return an unknown sparse profile with reviewFlags; do not substitute another company.
+The returned domain/website must match the provided official domain unless the field is null.
 For established public organizations, make a best effort to populate the core profile fields instead of returning an empty profile; record uncertainty in reviewFlags.
 Do not include bracket citation markers like [1] in text fields. Put URLs in sourceUrl fields instead.
 
@@ -1145,6 +1159,135 @@ function normalizeTag(value: string): { slug: string; label: string } | null {
   }
 
   return { slug, label: label.slice(0, 120) }
+}
+
+export function validateOrganizationIdentity(
+  candidate: Pick<OrganizationCandidate, 'domain' | 'website'>,
+  enrichment: OrganizationEnrichment,
+  facts: FactInput[] = normalizeFacts(enrichment.facts),
+): { valid: true } | { valid: false; reason: string } {
+  const candidateDomains = uniqueStrings(
+    [
+      normalizeWebDomain(candidate.domain),
+      normalizeWebDomain(candidate.website),
+    ].filter(nonNullable),
+  )
+
+  if (candidateDomains.length === 0) {
+    return { valid: true }
+  }
+
+  const returnedDomains = uniqueStrings(
+    [
+      normalizeWebDomain(enrichment.domain),
+      normalizeWebDomain(enrichment.website),
+    ].filter(nonNullable),
+  )
+
+  const mismatchedReturnedDomain = returnedDomains.find(
+    (domain) => !domainsOverlap(domain, candidateDomains),
+  )
+  if (mismatchedReturnedDomain) {
+    return {
+      valid: false,
+      reason: `identity mismatch returned ${mismatchedReturnedDomain} for ${candidateDomains.join(', ')}`,
+    }
+  }
+
+  if (
+    returnedDomains.some((domain) => domainsOverlap(domain, candidateDomains))
+  ) {
+    return { valid: true }
+  }
+
+  const sourceDomains = collectOrganizationSourceUrls(enrichment, facts)
+    .map(normalizeWebDomain)
+    .filter(nonNullable)
+
+  if (
+    sourceDomains.some((domain) => domainsOverlap(domain, candidateDomains))
+  ) {
+    return { valid: true }
+  }
+
+  if (isSparseUnknownOrganizationProfile(enrichment)) {
+    return { valid: true }
+  }
+
+  return {
+    valid: false,
+    reason: `identity mismatch: no returned domain or source URL matches ${candidateDomains.join(', ')}`,
+  }
+}
+
+export function normalizeWebDomain(
+  value: string | null | undefined,
+): string | null {
+  const trimmed = textOrNull(value)?.toLowerCase()
+  if (!trimmed) {
+    return null
+  }
+
+  try {
+    const url = trimmed.includes('://')
+      ? new URL(trimmed)
+      : new URL(`https://${trimmed}`)
+    return normalizeHostname(url.hostname)
+  } catch {
+    return normalizeHostname(trimmed.split('/')[0] ?? trimmed)
+  }
+}
+
+function normalizeHostname(hostname: string): string | null {
+  const normalized = hostname
+    .toLowerCase()
+    .replace(/\.$/, '')
+    .replace(/^www\./, '')
+
+  return normalized.includes('.') ? normalized : null
+}
+
+function domainsOverlap(domain: string, candidates: string[]): boolean {
+  return candidates.some(
+    (candidate) =>
+      domain === candidate ||
+      domain.endsWith(`.${candidate}`) ||
+      candidate.endsWith(`.${domain}`),
+  )
+}
+
+function isSparseUnknownOrganizationProfile(
+  enrichment: Pick<
+    OrganizationEnrichment,
+    | 'domain'
+    | 'website'
+    | 'partnershipFit'
+    | 'category'
+    | 'canonicalName'
+    | 'oneLineDescription'
+    | 'offerings'
+    | 'likelyUseCasesForPicardo'
+    | 'integrationSignals'
+    | 'complianceSignals'
+    | 'keyPublicPeople'
+    | 'facts'
+  >,
+): boolean {
+  return (
+    !textOrNull(enrichment.domain) &&
+    !textOrNull(enrichment.website) &&
+    (!textOrNull(enrichment.partnershipFit) ||
+      enrichment.partnershipFit === 'unknown') &&
+    (!textOrNull(enrichment.category) || enrichment.category === 'other') &&
+    !textOrNull(enrichment.canonicalName) &&
+    !textOrNull(enrichment.oneLineDescription) &&
+    enrichment.offerings.length === 0 &&
+    enrichment.likelyUseCasesForPicardo.length === 0 &&
+    enrichment.integrationSignals.length === 0 &&
+    enrichment.complianceSignals.length === 0 &&
+    enrichment.keyPublicPeople.length === 0 &&
+    enrichment.facts.length === 0
+  )
 }
 
 function describeOrganizationChanges(
