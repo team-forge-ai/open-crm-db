@@ -163,6 +163,762 @@ CREATE TYPE public.transcript_format AS ENUM (
 
 
 --
+-- Name: crm_assess_organization_domain_import(text, text, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_assess_organization_domain_import(source_slug text, raw_name text, raw_domain text, email text DEFAULT NULL::text) RETURNS TABLE(normalized_name text, normalized_domain text, registrable_domain text, should_create_organization boolean, should_link_registrable_organization boolean, reason_codes text[])
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  WITH cleaned AS (
+    SELECT
+      nullif(
+        regexp_replace(
+          regexp_replace(btrim(coalesce(raw_name, '')), '^[[:space:]''"]+|[[:space:]''"]+$', '', 'g'),
+          '[[:space:]]+',
+          ' ',
+          'g'
+        ),
+        ''
+      ) AS cleaned_name,
+      crm_normalize_import_domain(raw_domain) AS domain_text,
+      nullif(lower(btrim(email)), '') AS email_text,
+      nullif(lower(btrim(source_slug)), '') AS source_text
+  ),
+  domains AS (
+    SELECT
+      cleaned_name,
+      domain_text,
+      crm_registrable_import_domain(domain_text) AS root_domain,
+      email_text,
+      source_text
+    FROM cleaned
+  ),
+  signals AS (
+    SELECT
+      cleaned_name,
+      domain_text,
+      root_domain,
+      source_text,
+      domain_text IS NULL
+        OR domain_text !~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?([.][a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$' AS invalid_domain,
+      COALESCE(crm_is_machine_email(email_text), false) AS machine_email,
+      domain_text = ANY (ARRAY[
+        'aol.com',
+        'gmail.com',
+        'googlemail.com',
+        'hotmail.com',
+        'icloud.com',
+        'live.com',
+        'me.com',
+        'msn.com',
+        'outlook.com',
+        'proton.me',
+        'protonmail.com',
+        'yahoo.com'
+      ]) AS public_email_domain,
+      COALESCE(domain_text <> root_domain, false) AS true_subdomain,
+      COALESCE(
+        domain_text ~ '(^|[.])(hubspotemail[.]net|bnc[.]salesforce[.]com|customer[.]io|zendesk[.]com|jitbit[.]com|judge[.]me|luma-mail[.]com|pandadoc[.]net)$'
+        OR domain_text ~ '(^|[.])(bounce|bounces|mail-bounces|email|notification|notifications|unsubscribe|noreply|no-reply|mg|em[0-9]+|marketing|reminder|updates)[.]'
+        OR domain_text ~ '^e[.]',
+        false
+      ) AS email_infrastructure_domain,
+      COALESCE(source_text = ANY (ARRAY['gmail', 'google_calendar', 'google_meet']), false) AS untrusted_email_source
+    FROM domains
+  ),
+  reasons AS (
+    SELECT
+      cleaned_name,
+      domain_text,
+      root_domain,
+      true_subdomain,
+      array_remove(ARRAY[
+        CASE WHEN invalid_domain THEN 'invalid_domain' END,
+        CASE WHEN machine_email THEN 'machine_email' END,
+        CASE WHEN public_email_domain THEN 'public_email_domain' END,
+        CASE WHEN email_infrastructure_domain THEN 'email_infrastructure_domain' END,
+        CASE WHEN untrusted_email_source AND true_subdomain THEN 'untrusted_email_subdomain' END
+      ], NULL) AS reason_codes
+    FROM signals
+  )
+  SELECT
+    cleaned_name AS normalized_name,
+    domain_text AS normalized_domain,
+    root_domain AS registrable_domain,
+    cardinality(reason_codes) = 0 AS should_create_organization,
+    true_subdomain AS should_link_registrable_organization,
+    reason_codes
+  FROM reasons;
+$_$;
+
+
+--
+-- Name: FUNCTION crm_assess_organization_domain_import(source_slug text, raw_name text, raw_domain text, email text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.crm_assess_organization_domain_import(source_slug text, raw_name text, raw_domain text, email text) IS 'Assesses whether an untrusted domain-derived import should create a CRM organization; email-source subdomains are routed to root-domain linking or manual review.';
+
+
+--
+-- Name: crm_assess_person_import(text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_assess_person_import(raw_name text, email text) RETURNS TABLE(normalized_name text, should_create_person boolean, reason_codes text[])
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  WITH cleaned AS (
+    SELECT
+      nullif(
+        regexp_replace(
+          regexp_replace(btrim(coalesce(raw_name, '')), '^[[:space:]''"]+|[[:space:]''"]+$', '', 'g'),
+          '[[:space:]]+',
+          ' ',
+          'g'
+        ),
+        ''
+      ) AS cleaned_name,
+      nullif(lower(btrim(email)), '') AS email_text
+  ),
+  route_stripped AS (
+    SELECT
+      cleaned_name,
+      email_text,
+      COALESCE(cleaned_name ~* '[[:space:]]+(via|from|at)[[:space:]]+.+$', false) AS has_route_phrase,
+      nullif(
+        regexp_replace(cleaned_name, '[[:space:]]+(via|from|at)[[:space:]]+.+$', '', 'i'),
+        ''
+      ) AS route_stripped_name
+    FROM cleaned
+  ),
+  normalized AS (
+    SELECT
+      nullif(
+        CASE
+          WHEN route_stripped_name ~* '^[^,]+,[[:space:]]*(jr[.]?|sr[.]?|ii|iii|iv|m[.]?d[.]?|d[.]?o[.]?|ph[.]?d[.]?)$'
+            THEN route_stripped_name
+          WHEN route_stripped_name ~ '^[^,]+,[[:space:]]*[^,]+$'
+            THEN regexp_replace(route_stripped_name, '^([^,]+),[[:space:]]*(.+)$', '\2 \1')
+          ELSE route_stripped_name
+        END,
+        ''
+      ) AS normalized_name,
+      email_text,
+      has_route_phrase
+    FROM route_stripped
+  ),
+  signals AS (
+    SELECT
+      normalized_name,
+      email_text,
+      has_route_phrase,
+      email_text IS NULL
+        OR email_text !~ '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$' AS invalid_email,
+      crm_is_machine_email(email_text) AS machine_email,
+      normalized_name IS NULL AS missing_name,
+      COALESCE(
+        normalized_name ~* '^[^@[:space:]]+@[^@[:space:]]+$'
+        OR lower(normalized_name) = email_text,
+        false
+      ) AS email_as_name,
+      COALESCE(normalized_name ~ '[0-9]', false)
+        OR (
+          length(regexp_replace(coalesce(normalized_name, ''), '[^[:alnum:]]', '', 'g')) >= 24
+          AND normalized_name ~ '[0-9]'
+        ) AS numeric_or_token_noise,
+      COALESCE(
+        normalized_name ~* '^(the[[:space:]]+)?[[:alnum:]&.'' -]+[[:space:]]+(accounting|admin|billing|concierge|customer[[:space:]]+service|customer[[:space:]]+success|finance|help|marketing|notifications?|office|operations|ops|reminders?|sales|success|support|team)$'
+        OR normalized_name ~* '^(accounting|admin|billing|concierge|customer[[:space:]]+service|customer[[:space:]]+success|finance|help|info|marketing|notifications?|office|operations|ops|reminders?|sales|success|support|team)([[:space:]]+team)?$',
+        false
+      ) AS generic_sender_name,
+      COALESCE(
+        regexp_replace(
+          normalized_name,
+          '[,]?[[:space:]]+(Jr[.]?|Sr[.]?|II|III|IV|M[.]?D[.]?|D[.]?O[.]?|Ph[.]?D[.]?)$',
+          '',
+          'i'
+        ) ~ '^([[:upper:]][[:alpha:]''.-]*|[[:upper:]][.]?)([[:space:]]+(de|del|der|van|von|da|di|la|le|du|[[:upper:]][[:alpha:]''.-]*|[[:upper:]][.]?)){1,5}$',
+        false
+      ) AS has_capitalized_first_last
+    FROM normalized
+  ),
+  reasons AS (
+    SELECT
+      normalized_name,
+      array_remove(ARRAY[
+        CASE WHEN invalid_email THEN 'invalid_email' END,
+        CASE WHEN machine_email THEN 'machine_email' END,
+        CASE WHEN missing_name THEN 'missing_name' END,
+        CASE WHEN email_as_name THEN 'email_as_name' END,
+        CASE WHEN has_route_phrase THEN 'route_phrase' END,
+        CASE WHEN numeric_or_token_noise THEN 'numeric_or_token_noise' END,
+        CASE WHEN generic_sender_name THEN 'generic_sender_name' END,
+        CASE
+          WHEN NOT missing_name
+            AND NOT email_as_name
+            AND NOT numeric_or_token_noise
+            AND NOT generic_sender_name
+            AND NOT has_capitalized_first_last
+          THEN 'not_capitalized_first_last'
+        END
+      ], NULL) AS reason_codes
+    FROM signals
+  )
+  SELECT
+    normalized_name,
+    cardinality(reason_codes) = 0 AS should_create_person,
+    reason_codes
+  FROM reasons;
+$_$;
+
+
+--
+-- Name: FUNCTION crm_assess_person_import(raw_name text, email text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.crm_assess_person_import(raw_name text, email text) IS 'Normalizes an email display name and returns whether an untrusted import should create a CRM person for that name/email pair.';
+
+
+--
+-- Name: crm_check_task_project_team(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_check_task_project_team() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF NEW.project_id IS NULL THEN
+    RETURN NEW;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1
+      FROM task_project_teams tpt
+     WHERE tpt.project_id = NEW.project_id
+       AND tpt.team_id = NEW.team_id
+  ) THEN
+    RAISE EXCEPTION 'task project % is not linked to task team %', NEW.project_id, NEW.team_id
+      USING ERRCODE = '23514';
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: crm_import_organization_from_email(text, text, text, text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_import_organization_from_email(source_slug text, raw_name text, email text, external_kind text DEFAULT 'email_domain'::text, external_id text DEFAULT NULL::text, metadata jsonb DEFAULT '{}'::jsonb) RETURNS TABLE(organization_id uuid, created boolean, normalized_name text, normalized_domain text, registrable_domain text, should_create_organization boolean, should_link_registrable_organization boolean, reason_codes text[])
+    LANGUAGE plpgsql
+    AS $_$
+DECLARE
+  v_source_id uuid;
+  v_email text := nullif(lower(btrim(email)), '');
+  v_domain text := CASE
+    WHEN v_email ~ '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$'
+    THEN split_part(v_email, '@', 2)
+    ELSE NULL
+  END;
+  v_external_kind text := coalesce(nullif(btrim(external_kind), ''), 'email_domain');
+  v_external_id text := nullif(btrim(coalesce(external_id, v_domain)), '');
+  v_insert_name text;
+BEGIN
+  IF nullif(btrim(source_slug), '') IS NULL THEN
+    RAISE EXCEPTION 'source_slug is required';
+  END IF;
+
+  SELECT id
+    INTO v_source_id
+    FROM sources
+   WHERE slug = source_slug;
+
+  IF v_source_id IS NULL THEN
+    RAISE EXCEPTION 'unknown source_slug: %', source_slug;
+  END IF;
+
+  SELECT
+    assessment.normalized_name,
+    assessment.normalized_domain,
+    assessment.registrable_domain,
+    assessment.should_create_organization,
+    assessment.should_link_registrable_organization,
+    assessment.reason_codes
+    INTO
+      normalized_name,
+      normalized_domain,
+      registrable_domain,
+      should_create_organization,
+      should_link_registrable_organization,
+      reason_codes
+    FROM crm_assess_organization_domain_import(source_slug, raw_name, v_domain, v_email) AS assessment;
+
+  IF v_external_id IS NOT NULL THEN
+    SELECT ei.entity_id
+      INTO organization_id
+      FROM external_identities ei
+      JOIN organizations o ON o.id = ei.entity_id AND o.archived_at IS NULL
+     WHERE ei.source_id = v_source_id
+       AND ei.kind = v_external_kind
+       AND ei.external_id = v_external_id
+       AND ei.entity_type = 'organization'
+     LIMIT 1;
+  END IF;
+
+  IF organization_id IS NULL AND normalized_domain IS NOT NULL THEN
+    SELECT o.id
+      INTO organization_id
+      FROM organizations o
+     WHERE o.domain = normalized_domain::citext
+       AND o.archived_at IS NULL
+     ORDER BY o.created_at ASC
+     LIMIT 1;
+  END IF;
+
+  IF organization_id IS NULL
+     AND should_link_registrable_organization
+     AND registrable_domain IS NOT NULL THEN
+    SELECT o.id
+      INTO organization_id
+      FROM organizations o
+     WHERE o.domain = registrable_domain::citext
+       AND o.archived_at IS NULL
+     ORDER BY o.created_at ASC
+     LIMIT 1;
+  END IF;
+
+  IF organization_id IS NOT NULL THEN
+    created := false;
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  IF NOT should_create_organization THEN
+    created := false;
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  v_insert_name := coalesce(
+    normalized_name,
+    initcap(replace(split_part(normalized_domain, '.', 1), '-', ' '))
+  );
+
+  INSERT INTO organizations (name, domain, website, metadata)
+  VALUES (
+    v_insert_name,
+    normalized_domain::citext,
+    'https://' || normalized_domain,
+    coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+      'import_guardrail',
+      jsonb_build_object(
+        'source_slug', source_slug,
+        'raw_name', raw_name,
+        'email', v_email,
+        'normalized_domain', normalized_domain,
+        'registrable_domain', registrable_domain
+      )
+    )
+  )
+  RETURNING id INTO organization_id;
+
+  IF v_external_id IS NOT NULL THEN
+    INSERT INTO external_identities (
+      entity_type,
+      entity_id,
+      source_id,
+      kind,
+      external_id,
+      metadata
+    )
+    VALUES (
+      'organization',
+      organization_id,
+      v_source_id,
+      v_external_kind,
+      v_external_id,
+      jsonb_build_object('raw_name', raw_name, 'email', v_email, 'domain', normalized_domain)
+    )
+    ON CONFLICT ON CONSTRAINT external_identities_source_id_kind_external_id_key DO NOTHING;
+  END IF;
+
+  created := true;
+  RETURN NEXT;
+END;
+$_$;
+
+
+--
+-- Name: FUNCTION crm_import_organization_from_email(source_slug text, raw_name text, email text, external_kind text, external_id text, metadata jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.crm_import_organization_from_email(source_slug text, raw_name text, email text, external_kind text, external_id text, metadata jsonb) IS 'Safe email-domain import helper: resolves existing active organizations, links subdomains to an existing active root organization when possible, and refuses to create organizations for untrusted email-source subdomains or delivery infrastructure.';
+
+
+--
+-- Name: crm_import_person_from_email(text, text, text, text, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_import_person_from_email(source_slug text, raw_name text, email text, external_kind text DEFAULT 'contact'::text, external_id text DEFAULT NULL::text, metadata jsonb DEFAULT '{}'::jsonb) RETURNS TABLE(person_id uuid, created boolean, normalized_name text, should_create_person boolean, reason_codes text[])
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  v_source_id uuid;
+  v_email citext := nullif(lower(btrim(email)), '')::citext;
+  v_external_kind text := coalesce(nullif(btrim(external_kind), ''), 'contact');
+  v_external_id text := nullif(btrim(external_id), '');
+BEGIN
+  IF nullif(btrim(source_slug), '') IS NULL THEN
+    RAISE EXCEPTION 'source_slug is required';
+  END IF;
+
+  SELECT id
+    INTO v_source_id
+    FROM sources
+   WHERE slug = source_slug;
+
+  IF v_source_id IS NULL THEN
+    RAISE EXCEPTION 'unknown source_slug: %', source_slug;
+  END IF;
+
+  SELECT
+    assessment.normalized_name,
+    assessment.should_create_person,
+    assessment.reason_codes
+    INTO normalized_name, should_create_person, reason_codes
+    FROM crm_assess_person_import(raw_name, v_email::text) AS assessment;
+
+  IF v_external_id IS NOT NULL THEN
+    SELECT ei.entity_id
+      INTO person_id
+      FROM external_identities ei
+     WHERE ei.source_id = v_source_id
+       AND ei.kind = v_external_kind
+       AND ei.external_id = v_external_id
+       AND ei.entity_type = 'person'
+     LIMIT 1;
+  END IF;
+
+  IF person_id IS NULL AND v_email IS NOT NULL THEN
+    SELECT p.id
+      INTO person_id
+      FROM people p
+      LEFT JOIN person_emails pe ON pe.person_id = p.id
+     WHERE p.primary_email = v_email
+        OR pe.email = v_email
+     ORDER BY p.created_at ASC
+     LIMIT 1;
+  END IF;
+
+  IF person_id IS NOT NULL THEN
+    created := false;
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  IF NOT should_create_person THEN
+    created := false;
+    RETURN NEXT;
+    RETURN;
+  END IF;
+
+  INSERT INTO people (full_name, primary_email, metadata)
+  VALUES (
+    normalized_name,
+    v_email,
+    coalesce(metadata, '{}'::jsonb) || jsonb_build_object(
+      'import_guardrail', jsonb_build_object(
+        'source_slug', source_slug,
+        'raw_name', raw_name,
+        'normalized_name', normalized_name
+      )
+    )
+  )
+  RETURNING id INTO person_id;
+
+  INSERT INTO person_emails (person_id, email, label, is_primary, source_id)
+  VALUES (person_id, v_email, 'work', true, v_source_id)
+  ON CONFLICT ON CONSTRAINT person_emails_person_id_email_key DO NOTHING;
+
+  IF v_external_id IS NOT NULL THEN
+    INSERT INTO external_identities (
+      entity_type,
+      entity_id,
+      source_id,
+      kind,
+      external_id,
+      metadata
+    )
+    VALUES (
+      'person',
+      person_id,
+      v_source_id,
+      v_external_kind,
+      v_external_id,
+      jsonb_build_object('raw_name', raw_name, 'email', v_email::text)
+    )
+    ON CONFLICT ON CONSTRAINT external_identities_source_id_kind_external_id_key DO NOTHING;
+  END IF;
+
+  created := true;
+  RETURN NEXT;
+END;
+$$;
+
+
+--
+-- Name: FUNCTION crm_import_person_from_email(source_slug text, raw_name text, email text, external_kind text, external_id text, metadata jsonb); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.crm_import_person_from_email(source_slug text, raw_name text, email text, external_kind text, external_id text, metadata jsonb) IS 'Safe email/contact import helper: resolves existing people, normalizes trusted display names, and refuses to create people for machine senders or low-quality names.';
+
+
+--
+-- Name: crm_is_machine_email(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_is_machine_email(email text) RETURNS boolean
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  WITH parts AS (
+    SELECT nullif(lower(btrim(email)), '') AS email_text
+  ),
+  split AS (
+    SELECT
+      email_text,
+      split_part(email_text, '@', 1) AS local_part,
+      split_part(email_text, '@', 2) AS domain_part
+    FROM parts
+  )
+  SELECT COALESCE(
+    email_text ~ '^[^@[:space:]]+@[^@[:space:]]+[.][^@[:space:]]+$'
+    AND (
+      local_part = ANY (ARRAY[
+        'accounting',
+        'admin',
+        'announcements',
+        'billing',
+        'concierge',
+        'contact',
+        'customer.service',
+        'customerservice',
+        'devs',
+        'do-not-reply',
+        'donotreply',
+        'dse',
+        'education',
+        'enterprise-webinars',
+        'finance',
+        'hello',
+        'help',
+        'howdy',
+        'info',
+        'marketing',
+        'newsletter',
+        'no-reply',
+        'noreply',
+        'notifications',
+        'ops',
+        'operations',
+        'postmaster',
+        'provider',
+        'registration',
+        'sales',
+        'ship',
+        'support',
+        'team',
+        'test',
+        'websupport',
+        'win'
+      ])
+      OR local_part ~ '^(bounce|bounces|mailer-daemon|notification|notifications|no[._-]?reply|do[._-]?not[._-]?reply|reply|replies)([._%+-]|$)'
+      OR domain_part = ANY (ARRAY[
+        'adobesign.com',
+        'docusign.net',
+        'email.pandadoc.net',
+        'facebookmail.com',
+        'info.vercel.com',
+        'login.customer.io',
+        'team.twilio.com'
+      ])
+      OR domain_part ~ '(^|[.])bnc[.]salesforce[.]com$'
+      OR (
+        length(regexp_replace(local_part, '[^[:alnum:]]', '', 'g')) >= 28
+        AND local_part ~ '[0-9]'
+      )
+    ),
+    false
+  )
+  FROM split;
+$_$;
+
+
+--
+-- Name: FUNCTION crm_is_machine_email(email text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.crm_is_machine_email(email text) IS 'Returns true for generic inboxes, notification senders, bounce addresses, and high-entropy generated email localparts that should not create CRM people.';
+
+
+--
+-- Name: crm_normalize_import_domain(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_normalize_import_domain(raw_domain text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $_$
+  SELECT nullif(
+    regexp_replace(
+      regexp_replace(
+        regexp_replace(
+          regexp_replace(
+            regexp_replace(lower(btrim(coalesce(raw_domain, ''))), '^[a-z][a-z0-9+.-]*://', ''),
+            '^[^@/]+@',
+            ''
+          ),
+          '[:/].*$',
+          ''
+        ),
+        '^www[.]',
+        ''
+      ),
+      '^[.]+|[.]+$',
+      '',
+      'g'
+    ),
+    ''
+  );
+$_$;
+
+
+--
+-- Name: FUNCTION crm_normalize_import_domain(raw_domain text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.crm_normalize_import_domain(raw_domain text) IS 'Normalizes an imported domain or URL-like value to a lowercase bare domain for CRM import guardrails.';
+
+
+--
+-- Name: crm_prevent_task_project_team_orphan(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_prevent_task_project_team_orphan() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF EXISTS (
+    SELECT 1
+      FROM tasks t
+     WHERE t.project_id = OLD.project_id
+       AND t.team_id = OLD.team_id
+       AND t.archived_at IS NULL
+  ) THEN
+    RAISE EXCEPTION 'task project/team link is still used by active tasks'
+      USING ERRCODE = '23503';
+  END IF;
+
+  RETURN OLD;
+END;
+$$;
+
+
+--
+-- Name: crm_registrable_import_domain(text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_registrable_import_domain(raw_domain text) RETURNS text
+    LANGUAGE sql IMMUTABLE
+    AS $$
+  WITH normalized AS (
+    SELECT crm_normalize_import_domain(raw_domain) AS domain_text
+  ),
+  labels AS (
+    SELECT
+      domain_text,
+      string_to_array(domain_text, '.') AS parts
+    FROM normalized
+    WHERE domain_text IS NOT NULL
+  ),
+  suffix AS (
+    SELECT
+      domain_text,
+      parts,
+      cardinality(parts) AS part_count,
+      CASE
+        WHEN cardinality(parts) >= 3
+          AND (parts[cardinality(parts) - 1] || '.' || parts[cardinality(parts)]) = ANY (ARRAY[
+            'ac.uk',
+            'ac.za',
+            'co.in',
+            'co.jp',
+            'co.kr',
+            'co.nz',
+            'co.uk',
+            'co.za',
+            'com.ar',
+            'com.au',
+            'com.br',
+            'com.co',
+            'com.mx',
+            'com.pe',
+            'com.ph',
+            'com.sg',
+            'com.tr',
+            'edu.au',
+            'gov.uk',
+            'gov.za',
+            'net.au',
+            'org.au',
+            'org.uk',
+            'org.za'
+          ])
+        THEN 3
+        ELSE 2
+      END AS registrable_label_count
+    FROM labels
+  )
+  SELECT CASE
+    WHEN domain_text IS NULL THEN NULL
+    WHEN part_count <= registrable_label_count THEN domain_text
+    ELSE array_to_string(parts[(part_count - registrable_label_count + 1):part_count], '.')
+  END
+  FROM suffix;
+$$;
+
+
+--
+-- Name: FUNCTION crm_registrable_import_domain(raw_domain text); Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON FUNCTION public.crm_registrable_import_domain(raw_domain text) IS 'Returns a best-effort registrable/root domain for imported domains, including common multi-label public suffixes.';
+
+
+--
+-- Name: crm_search_text(text[]); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_search_text(VARIADIC parts text[]) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE
+    AS $$
+  SELECT COALESCE(array_to_string(parts, ' ', ''), '');
+$$;
+
+
+--
+-- Name: crm_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_set_updated_at() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  NEW.updated_at = NOW();
+  RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: match_full_text_embeddings(text, integer, text[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -182,11 +938,11 @@ CREATE FUNCTION public.match_full_text_embeddings(search_query text, match_count
     se.embedding_model,
     se.embedding_model_version,
     se.metadata,
-    ts_rank_cd(to_tsvector('english', se.content), query.tsq, 32) AS rank
+    ts_rank_cd(se.search_tsv, query.tsq, 32) AS rank
   FROM semantic_embeddings se
   CROSS JOIN query
   WHERE se.archived_at IS NULL
-    AND to_tsvector('english', se.content) @@ query.tsq
+    AND se.search_tsv @@ query.tsq
     AND (
       filter_target_types IS NULL
       OR se.target_type = ANY(filter_target_types)
@@ -226,82 +982,6 @@ $$;
 
 
 --
--- Name: crm_check_task_project_team(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.crm_check_task_project_team() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  IF NEW.project_id IS NULL THEN
-    RETURN NEW;
-  END IF;
-
-  IF NOT EXISTS (
-    SELECT 1
-      FROM task_project_teams tpt
-     WHERE tpt.project_id = NEW.project_id
-       AND tpt.team_id = NEW.team_id
-  ) THEN
-    RAISE EXCEPTION 'task project % is not linked to task team %', NEW.project_id, NEW.team_id
-      USING ERRCODE = '23514';
-  END IF;
-
-  RETURN NEW;
-END;
-$$;
-
-
---
--- Name: crm_prevent_task_project_team_orphan(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.crm_prevent_task_project_team_orphan() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  IF EXISTS (
-    SELECT 1
-      FROM tasks t
-     WHERE t.project_id = OLD.project_id
-       AND t.team_id = OLD.team_id
-       AND t.archived_at IS NULL
-  ) THEN
-    RAISE EXCEPTION 'task project/team link is still used by active tasks'
-      USING ERRCODE = '23503';
-  END IF;
-
-  RETURN OLD;
-END;
-$$;
-
-
---
--- Name: crm_search_text(text[]); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.crm_search_text(VARIADIC parts text[]) RETURNS text
-    LANGUAGE sql IMMUTABLE PARALLEL SAFE
-    AS $$
-  SELECT COALESCE(array_to_string(parts, ' ', ''), '');
-$$;
-
-
---
--- Name: crm_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
---
-
-CREATE FUNCTION public.crm_set_updated_at() RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-BEGIN
-  NEW.updated_at = NOW();
-  RETURN NEW;
-END;
-$$;
-
-
---
 -- Name: search_crm_full_text(text, integer, text[]); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -309,9 +989,427 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     LANGUAGE sql STABLE
     AS $$
   WITH query AS (
-    SELECT websearch_to_tsquery('english', COALESCE(search_query, '')) AS tsq
+    SELECT
+      websearch_to_tsquery('english', COALESCE(search_query, '')) AS tsq,
+      NULLIF(lower(btrim(COALESCE(search_query, ''))), '') AS normalized
   ),
-  ranked AS (
+  direct AS (
+    SELECT
+      'organization'::text AS target_type,
+      o.id AS target_id,
+      o.name AS title,
+      concat_ws(' / ', o.domain::text, o.industry, o.hq_country) AS subtitle,
+      o.updated_at AS occurred_at,
+      (
+        CASE
+          WHEN lower(o.name) = query.normalized THEN 20
+          WHEN lower(o.legal_name) = query.normalized THEN 18
+          WHEN lower(o.domain::text) = query.normalized THEN 16
+          WHEN starts_with(lower(o.name), query.normalized) THEN 12
+          WHEN starts_with(lower(o.legal_name), query.normalized) THEN 10
+          WHEN starts_with(lower(o.domain::text), query.normalized) THEN 9
+          ELSE 5
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', o.name, o.legal_name, o.domain::text, o.website),
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      o.metadata AS metadata
+    FROM organizations o
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND o.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'organization' = ANY(filter_target_types))
+      AND (
+        lower(o.name) = query.normalized
+        OR lower(o.legal_name) = query.normalized
+        OR lower(o.domain::text) = query.normalized
+        OR starts_with(lower(o.name), query.normalized)
+        OR starts_with(lower(o.legal_name), query.normalized)
+        OR starts_with(lower(o.domain::text), query.normalized)
+        OR position(query.normalized in lower(COALESCE(o.website, ''))) > 0
+      )
+
+    UNION ALL
+
+    SELECT
+      'person'::text AS target_type,
+      p.id AS target_id,
+      p.full_name AS title,
+      concat_ws(' / ', p.headline, p.city, p.country) AS subtitle,
+      p.updated_at AS occurred_at,
+      (
+        CASE
+          WHEN lower(p.full_name) = query.normalized THEN 18
+          WHEN lower(p.display_name) = query.normalized THEN 17
+          WHEN lower(p.preferred_name) = query.normalized THEN 16
+          WHEN lower(p.primary_email::text) = query.normalized THEN 15
+          WHEN starts_with(lower(p.full_name), query.normalized) THEN 10
+          WHEN starts_with(lower(p.display_name), query.normalized) THEN 9
+          WHEN starts_with(lower(p.primary_email::text), query.normalized) THEN 8
+          ELSE 4
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', p.full_name, p.display_name, p.preferred_name, p.primary_email::text, p.website),
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      p.metadata AS metadata
+    FROM people p
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND p.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'person' = ANY(filter_target_types))
+      AND (
+        lower(p.full_name) = query.normalized
+        OR lower(p.display_name) = query.normalized
+        OR lower(p.preferred_name) = query.normalized
+        OR lower(p.primary_email::text) = query.normalized
+        OR starts_with(lower(p.full_name), query.normalized)
+        OR starts_with(lower(p.display_name), query.normalized)
+        OR starts_with(lower(p.preferred_name), query.normalized)
+        OR starts_with(lower(p.primary_email::text), query.normalized)
+        OR position(query.normalized in lower(COALESCE(p.website, ''))) > 0
+      )
+
+    UNION ALL
+
+    SELECT
+      'interaction'::text AS target_type,
+      i.id AS target_id,
+      COALESCE(i.subject, i.type::text) AS title,
+      concat_ws(' / ', i.type::text, i.direction::text, i.location) AS subtitle,
+      i.occurred_at,
+      (
+        CASE
+          WHEN lower(i.subject) = query.normalized THEN 8
+          WHEN starts_with(lower(i.subject), query.normalized) THEN 5
+          ELSE 3
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        COALESCE(i.subject, ''),
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      i.metadata AS metadata
+    FROM interactions i
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND i.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'interaction' = ANY(filter_target_types))
+      AND (
+        lower(i.subject) = query.normalized
+        OR starts_with(lower(i.subject), query.normalized)
+      )
+
+    UNION ALL
+
+    SELECT
+      'document'::text AS target_type,
+      d.id AS target_id,
+      d.title,
+      concat_ws(' / ', d.document_type, d.source_path) AS subtitle,
+      COALESCE(d.occurred_at, d.authored_at, d.created_at) AS occurred_at,
+      (
+        CASE
+          WHEN lower(d.title) = query.normalized THEN 8
+          WHEN starts_with(lower(d.title), query.normalized) THEN 5
+          ELSE 3
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', d.title, d.source_path),
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      d.metadata AS metadata
+    FROM documents d
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND d.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'document' = ANY(filter_target_types))
+      AND (
+        lower(d.title) = query.normalized
+        OR starts_with(lower(d.title), query.normalized)
+      )
+
+    UNION ALL
+
+    SELECT
+      'organization_research_profile'::text AS target_type,
+      orp.id AS target_id,
+      COALESCE(orp.canonical_name, orp.domain::text, 'Organization research profile') AS title,
+      concat_ws(' / ', orp.category, orp.partnership_fit) AS subtitle,
+      orp.researched_at AS occurred_at,
+      (
+        CASE
+          WHEN lower(orp.canonical_name) = query.normalized THEN 14
+          WHEN lower(orp.domain::text) = query.normalized THEN 13
+          WHEN starts_with(lower(orp.canonical_name), query.normalized) THEN 8
+          WHEN starts_with(lower(orp.domain::text), query.normalized) THEN 7
+          ELSE 4
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', orp.canonical_name, orp.domain::text, orp.website),
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      jsonb_build_object(
+        'organization_id', orp.organization_id,
+        'source_urls', orp.source_urls
+      ) AS metadata
+    FROM organization_research_profiles orp
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND (filter_target_types IS NULL OR 'organization_research_profile' = ANY(filter_target_types))
+      AND (
+        lower(orp.canonical_name) = query.normalized
+        OR lower(orp.domain::text) = query.normalized
+        OR starts_with(lower(orp.canonical_name), query.normalized)
+        OR starts_with(lower(orp.domain::text), query.normalized)
+        OR position(query.normalized in lower(COALESCE(orp.website, ''))) > 0
+      )
+
+    UNION ALL
+
+    SELECT
+      'partnership'::text AS target_type,
+      p.id AS target_id,
+      p.name AS title,
+      concat_ws(' / ', p.partnership_type, p.stage, p.priority) AS subtitle,
+      COALESCE(p.launched_at, p.signed_at, p.updated_at) AS occurred_at,
+      (
+        CASE
+          WHEN lower(p.name) = query.normalized THEN 12
+          WHEN starts_with(lower(p.name), query.normalized) THEN 7
+          ELSE 4
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        p.name,
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      p.metadata AS metadata
+    FROM partnerships p
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND p.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'partnership' = ANY(filter_target_types))
+      AND (
+        lower(p.name) = query.normalized
+        OR starts_with(lower(p.name), query.normalized)
+      )
+
+    UNION ALL
+
+    SELECT
+      'partnership_service'::text AS target_type,
+      ps.id AS target_id,
+      ps.name AS title,
+      concat_ws(' / ', ps.service_type, ps.status) AS subtitle,
+      ps.updated_at AS occurred_at,
+      (
+        CASE
+          WHEN lower(ps.name) = query.normalized THEN 10
+          WHEN starts_with(lower(ps.name), query.normalized) THEN 6
+          ELSE 3
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        ps.name,
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      ps.metadata AS metadata
+    FROM partnership_services ps
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND ps.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'partnership_service' = ANY(filter_target_types))
+      AND (
+        lower(ps.name) = query.normalized
+        OR starts_with(lower(ps.name), query.normalized)
+      )
+
+    UNION ALL
+
+    SELECT
+      'partnership_integration'::text AS target_type,
+      pi.id AS target_id,
+      pi.integration_type AS title,
+      concat_ws(' / ', pi.status, pi.sync_direction) AS subtitle,
+      COALESCE(pi.last_sync_at, pi.updated_at) AS occurred_at,
+      (
+        CASE
+          WHEN lower(pi.integration_type) = query.normalized THEN 10
+          WHEN starts_with(lower(pi.integration_type), query.normalized) THEN 6
+          ELSE 3
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        pi.integration_type,
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      pi.metadata AS metadata
+    FROM partnership_integrations pi
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND pi.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'partnership_integration' = ANY(filter_target_types))
+      AND (
+        lower(pi.integration_type) = query.normalized
+        OR starts_with(lower(pi.integration_type), query.normalized)
+      )
+
+    UNION ALL
+
+    SELECT
+      'team_member'::text AS target_type,
+      tm.id AS target_id,
+      tm.name AS title,
+      concat_ws(' / ', tm.title, tm.email::text) AS subtitle,
+      tm.updated_at AS occurred_at,
+      (
+        CASE
+          WHEN lower(tm.name) = query.normalized THEN 18
+          WHEN lower(tm.email::text) = query.normalized THEN 15
+          WHEN starts_with(lower(tm.name), query.normalized) THEN 10
+          WHEN starts_with(lower(tm.email::text), query.normalized) THEN 8
+          ELSE 4
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', tm.name, tm.title, tm.email::text),
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      tm.metadata AS metadata
+    FROM team_members tm
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND tm.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'team_member' = ANY(filter_target_types))
+      AND (
+        lower(tm.name) = query.normalized
+        OR lower(tm.email::text) = query.normalized
+        OR starts_with(lower(tm.name), query.normalized)
+        OR starts_with(lower(tm.email::text), query.normalized)
+      )
+
+    UNION ALL
+
+    SELECT
+      'task_project'::text AS target_type,
+      tp.id AS target_id,
+      tp.name AS title,
+      concat_ws(' / ', tp.status_name, tp.priority_label, tp.target_date::text) AS subtitle,
+      COALESCE(tp.completed_at, tp.canceled_at, tp.started_at, tp.updated_at) AS occurred_at,
+      (
+        CASE
+          WHEN lower(tp.name) = query.normalized THEN 10
+          WHEN starts_with(lower(tp.name), query.normalized) THEN 6
+          ELSE 3
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        tp.name,
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      tp.metadata AS metadata
+    FROM task_projects tp
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND tp.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'task_project' = ANY(filter_target_types))
+      AND (
+        lower(tp.name) = query.normalized
+        OR starts_with(lower(tp.name), query.normalized)
+      )
+
+    UNION ALL
+
+    SELECT
+      'task'::text AS target_type,
+      t.id AS target_id,
+      COALESCE(t.source_identifier || ': ' || t.title, t.title) AS title,
+      concat_ws(
+        ' / ',
+        tp.name,
+        ts.name,
+        assignee.name,
+        t.priority_label,
+        t.due_date::text
+      ) AS subtitle,
+      COALESCE(t.completed_at, t.canceled_at, t.started_at, t.source_updated_at, t.updated_at) AS occurred_at,
+      (
+        CASE
+          WHEN lower(t.title) = query.normalized THEN 8
+          WHEN lower(t.source_identifier) = query.normalized THEN 8
+          WHEN starts_with(lower(t.title), query.normalized) THEN 5
+          WHEN starts_with(lower(t.source_identifier), query.normalized) THEN 5
+          ELSE 3
+        END
+      )::real AS rank,
+      ts_headline(
+        'english',
+        concat_ws(' ', t.source_identifier, t.title),
+        query.tsq,
+        'MaxWords=20, MinWords=4, MaxFragments=1'
+      ) AS headline,
+      t.metadata || jsonb_build_object(
+        'source_identifier', t.source_identifier,
+        'source_url', t.source_url,
+        'project_id', t.project_id,
+        'status_id', t.status_id,
+        'assignee_member_id', t.assignee_member_id
+      ) AS metadata
+    FROM tasks t
+    LEFT JOIN task_projects tp ON tp.id = t.project_id
+    LEFT JOIN task_statuses ts ON ts.id = t.status_id
+    LEFT JOIN team_members assignee ON assignee.id = t.assignee_member_id
+    CROSS JOIN query
+    WHERE query.normalized IS NOT NULL
+      AND t.archived_at IS NULL
+      AND (filter_target_types IS NULL OR 'task' = ANY(filter_target_types))
+      AND (
+        lower(t.title) = query.normalized
+        OR lower(t.source_identifier) = query.normalized
+        OR starts_with(lower(t.title), query.normalized)
+        OR starts_with(lower(t.source_identifier), query.normalized)
+      )
+  ),
+  ranked_direct AS (
+    SELECT target_type, target_id, title, subtitle, occurred_at, rank, headline, metadata
+    FROM (
+      SELECT
+        direct.*,
+        row_number() OVER (
+          PARTITION BY target_type
+          ORDER BY rank DESC, occurred_at DESC NULLS LAST
+        ) AS direct_rank
+      FROM direct
+    ) rows
+    WHERE direct_rank <= 3
+  ),
+  lexical AS (
     SELECT *
     FROM search_crm_full_text_base(search_query, 100, filter_target_types)
 
@@ -323,11 +1421,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       tm.name AS title,
       concat_ws(' / ', tm.title, tm.email::text) AS subtitle,
       tm.updated_at AS occurred_at,
-      ts_rank_cd(
-        to_tsvector('english', crm_search_text(tm.name, tm.title, tm.email::text)),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(tm.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', tm.name, tm.title, tm.email::text),
@@ -339,7 +1433,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     CROSS JOIN query
     WHERE tm.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'team_member' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(tm.name, tm.title, tm.email::text)) @@ query.tsq
+      AND tm.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -349,11 +1443,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       tp.name AS title,
       concat_ws(' / ', tp.status_name, tp.priority_label, tp.target_date::text) AS subtitle,
       COALESCE(tp.completed_at, tp.canceled_at, tp.started_at, tp.updated_at) AS occurred_at,
-      ts_rank_cd(
-        to_tsvector('english', crm_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(tp.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label),
@@ -365,7 +1455,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     CROSS JOIN query
     WHERE tp.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'task_project' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(tp.name, tp.summary, tp.description, tp.status_name, tp.priority_label)) @@ query.tsq
+      AND tp.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -383,10 +1473,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       ) AS subtitle,
       COALESCE(t.completed_at, t.canceled_at, t.started_at, t.source_updated_at, t.updated_at) AS occurred_at,
       ts_rank_cd(
-        to_tsvector(
-          'english',
-          crm_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
-        ),
+        t.search_tsv || to_tsvector('english', crm_search_text(tp.name, ts.name, assignee.name)),
         query.tsq,
         32
       ) AS rank,
@@ -410,10 +1497,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     CROSS JOIN query
     WHERE t.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'task' = ANY(filter_target_types))
-      AND to_tsvector(
-        'english',
-        crm_search_text(t.title, left(t.description, 250000), t.source_identifier, t.priority_label, t.git_branch_name, tp.name, ts.name, assignee.name)
-      ) @@ query.tsq
+      AND (t.search_tsv || to_tsvector('english', crm_search_text(tp.name, ts.name, assignee.name))) @@ query.tsq
 
     UNION ALL
 
@@ -423,7 +1507,7 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
       COALESCE(t.source_identifier || ' comment', 'Task comment') AS title,
       concat_ws(' / ', t.title, tm.name) AS subtitle,
       COALESCE(tc.source_created_at, tc.created_at) AS occurred_at,
-      ts_rank_cd(to_tsvector('english', left(tc.body, 250000)), query.tsq, 32) AS rank,
+      ts_rank_cd(tc.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         left(tc.body, 250000),
@@ -440,19 +1524,37 @@ CREATE FUNCTION public.search_crm_full_text(search_query text, match_count integ
     CROSS JOIN query
     WHERE tc.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'task_comment' = ANY(filter_target_types))
-      AND to_tsvector('english', left(tc.body, 250000)) @@ query.tsq
+      AND tc.search_tsv @@ query.tsq
+  ),
+  combined AS (
+    SELECT * FROM ranked_direct
+    UNION ALL
+    SELECT * FROM lexical
+  ),
+  deduped AS (
+    SELECT DISTINCT ON (combined.target_type, combined.target_id)
+      combined.target_type,
+      combined.target_id,
+      combined.title,
+      combined.subtitle,
+      combined.occurred_at,
+      combined.rank,
+      combined.headline,
+      combined.metadata
+    FROM combined
+    ORDER BY combined.target_type, combined.target_id, combined.rank DESC, combined.occurred_at DESC NULLS LAST
   )
   SELECT
-    ranked.target_type,
-    ranked.target_id,
-    ranked.title,
-    ranked.subtitle,
-    ranked.occurred_at,
-    ranked.rank,
-    ranked.headline,
-    ranked.metadata
-  FROM ranked
-  ORDER BY ranked.rank DESC, ranked.occurred_at DESC NULLS LAST
+    deduped.target_type,
+    deduped.target_id,
+    deduped.title,
+    deduped.subtitle,
+    deduped.occurred_at,
+    deduped.rank,
+    deduped.headline,
+    deduped.metadata
+  FROM deduped
+  ORDER BY deduped.rank DESC, deduped.occurred_at DESC NULLS LAST
   LIMIT LEAST(GREATEST(COALESCE(match_count, 20), 1), 100);
 $$;
 
@@ -474,14 +1576,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       o.name AS title,
       concat_ws(' / ', o.domain::text, o.industry, o.hq_country) AS subtitle,
       o.updated_at AS occurred_at,
-      ts_rank_cd(
-        to_tsvector(
-          'english',
-          crm_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
-        ),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(o.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', o.name, o.legal_name, o.description, o.industry, o.notes),
@@ -493,10 +1588,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE o.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'organization' = ANY(filter_target_types))
-      AND to_tsvector(
-        'english',
-        crm_search_text(o.name, o.legal_name, o.domain::text, o.website, o.description, o.industry, o.hq_city, o.hq_region, o.hq_country, o.notes)
-      ) @@ query.tsq
+      AND o.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -506,14 +1598,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       p.full_name AS title,
       concat_ws(' / ', p.headline, p.city, p.country) AS subtitle,
       p.updated_at AS occurred_at,
-      ts_rank_cd(
-        to_tsvector(
-          'english',
-          crm_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
-        ),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(p.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', p.full_name, p.headline, p.summary, p.notes),
@@ -525,10 +1610,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE p.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'person' = ANY(filter_target_types))
-      AND to_tsvector(
-        'english',
-        crm_search_text(p.full_name, p.display_name, p.preferred_name, p.headline, p.summary, p.city, p.region, p.country, p.timezone, p.website, p.notes)
-      ) @@ query.tsq
+      AND p.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -538,7 +1620,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       COALESCE(i.subject, i.type::text) AS title,
       concat_ws(' / ', i.type::text, i.direction::text, i.location) AS subtitle,
       i.occurred_at,
-      ts_rank_cd(to_tsvector('english', crm_search_text(i.subject, left(i.body, 250000), i.location)), query.tsq, 32) AS rank,
+      ts_rank_cd(i.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', i.subject, left(i.body, 250000), i.location),
@@ -550,7 +1632,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE i.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'interaction' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(i.subject, left(i.body, 250000), i.location)) @@ query.tsq
+      AND i.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -560,7 +1642,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       COALESCE(i.subject, 'Call transcript') AS title,
       concat_ws(' / ', ct.format::text, ct.language, ct.transcribed_by) AS subtitle,
       i.occurred_at,
-      ts_rank_cd(to_tsvector('english', left(ct.raw_text, 500000)), query.tsq, 32) AS rank,
+      ts_rank_cd(ct.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         left(ct.raw_text, 500000),
@@ -572,7 +1654,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     JOIN interactions i ON i.id = ct.interaction_id
     CROSS JOIN query
     WHERE (filter_target_types IS NULL OR 'call_transcript' = ANY(filter_target_types))
-      AND to_tsvector('english', left(ct.raw_text, 500000)) @@ query.tsq
+      AND ct.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -582,11 +1664,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       d.title,
       concat_ws(' / ', d.document_type, d.source_path) AS subtitle,
       COALESCE(d.occurred_at, d.authored_at, d.created_at) AS occurred_at,
-      ts_rank_cd(
-        to_tsvector('english', crm_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(d.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', d.title, d.summary, left(d.body, 500000)),
@@ -598,7 +1676,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE d.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'document' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(d.title, d.document_type, d.summary, left(d.body, 500000), d.source_path)) @@ query.tsq
+      AND d.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -608,7 +1686,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       COALESCE(an.title, an.kind::text) AS title,
       concat_ws(' / ', an.kind::text, an.model, an.model_version) AS subtitle,
       an.generated_at AS occurred_at,
-      ts_rank_cd(to_tsvector('english', crm_search_text(an.title, left(an.content, 250000))), query.tsq, 32) AS rank,
+      ts_rank_cd(an.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', an.title, left(an.content, 250000)),
@@ -619,7 +1697,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     FROM ai_notes an
     CROSS JOIN query
     WHERE (filter_target_types IS NULL OR 'ai_note' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(an.title, left(an.content, 250000))) @@ query.tsq
+      AND an.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -629,7 +1707,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       ef.key AS title,
       ef.subject_type::text AS subtitle,
       ef.observed_at AS occurred_at,
-      ts_rank_cd(to_tsvector('english', crm_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))), query.tsq, 32) AS rank,
+      ts_rank_cd(ef.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', ef.key, ef.value_text, left(ef.source_excerpt, 50000)),
@@ -640,7 +1718,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     FROM extracted_facts ef
     CROSS JOIN query
     WHERE (filter_target_types IS NULL OR 'extracted_fact' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(ef.key, ef.value_text, left(ef.source_excerpt, 50000))) @@ query.tsq
+      AND ef.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -650,30 +1728,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       COALESCE(orp.canonical_name, orp.domain::text, 'Organization research profile') AS title,
       concat_ws(' / ', orp.category, orp.partnership_fit) AS subtitle,
       orp.researched_at AS occurred_at,
-      ts_rank_cd(
-        to_tsvector(
-          'english',
-          crm_search_text(
-            orp.canonical_name,
-            orp.website,
-            orp.domain::text,
-            orp.one_line_description,
-            orp.category,
-            orp.healthcare_relevance,
-            orp.partnership_fit,
-            orp.partnership_fit_rationale,
-            orp.offerings::text,
-            orp.likely_use_cases::text,
-            orp.integration_signals::text,
-            orp.compliance_signals::text,
-            orp.key_public_people::text,
-            orp.suggested_tags::text,
-            orp.review_flags::text
-          )
-        ),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(orp.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', orp.canonical_name, orp.one_line_description, orp.healthcare_relevance, orp.partnership_fit, orp.partnership_fit_rationale),
@@ -687,26 +1742,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     FROM organization_research_profiles orp
     CROSS JOIN query
     WHERE (filter_target_types IS NULL OR 'organization_research_profile' = ANY(filter_target_types))
-      AND to_tsvector(
-        'english',
-        crm_search_text(
-          orp.canonical_name,
-          orp.website,
-          orp.domain::text,
-          orp.one_line_description,
-          orp.category,
-          orp.healthcare_relevance,
-          orp.partnership_fit,
-          orp.partnership_fit_rationale,
-          orp.offerings::text,
-          orp.likely_use_cases::text,
-          orp.integration_signals::text,
-          orp.compliance_signals::text,
-          orp.key_public_people::text,
-          orp.suggested_tags::text,
-          orp.review_flags::text
-        )
-      ) @@ query.tsq
+      AND orp.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -716,11 +1752,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       p.name AS title,
       concat_ws(' / ', p.partnership_type, p.stage, p.priority) AS subtitle,
       COALESCE(p.launched_at, p.signed_at, p.updated_at) AS occurred_at,
-      ts_rank_cd(
-        to_tsvector('english', crm_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(p.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', p.name, p.strategic_rationale, p.commercial_model, p.status_notes),
@@ -732,7 +1764,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE p.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(p.name, p.partnership_type, p.stage, p.priority, p.strategic_rationale, p.commercial_model, p.status_notes)) @@ query.tsq
+      AND p.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -742,11 +1774,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       ps.name AS title,
       concat_ws(' / ', ps.service_type, ps.status) AS subtitle,
       ps.updated_at AS occurred_at,
-      ts_rank_cd(
-        to_tsvector('english', crm_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(ps.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text),
@@ -758,7 +1786,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE ps.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership_service' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(ps.name, ps.service_type, ps.status, ps.clinical_use, ps.data_modalities::text)) @@ query.tsq
+      AND ps.search_tsv @@ query.tsq
 
     UNION ALL
 
@@ -768,11 +1796,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
       pi.integration_type AS title,
       concat_ws(' / ', pi.status, pi.sync_direction) AS subtitle,
       COALESCE(pi.last_sync_at, pi.updated_at) AS occurred_at,
-      ts_rank_cd(
-        to_tsvector('english', crm_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)),
-        query.tsq,
-        32
-      ) AS rank,
+      ts_rank_cd(pi.search_tsv, query.tsq, 32) AS rank,
       ts_headline(
         'english',
         concat_ws(' ', pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes),
@@ -784,7 +1808,7 @@ CREATE FUNCTION public.search_crm_full_text_base(search_query text, match_count 
     CROSS JOIN query
     WHERE pi.archived_at IS NULL
       AND (filter_target_types IS NULL OR 'partnership_integration' = ANY(filter_target_types))
-      AND to_tsvector('english', crm_search_text(pi.integration_type, pi.status, pi.sync_direction, pi.data_formats::text, pi.notes)) @@ query.tsq
+      AND pi.search_tsv @@ query.tsq
   )
   SELECT
     ranked.target_type,
@@ -848,6 +1872,7 @@ CREATE TABLE public.ai_notes (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     document_id uuid,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, "left"(content, 250000)]))) STORED,
     CONSTRAINT ck_ai_notes_exactly_one_anchor CHECK ((((((interaction_id IS NOT NULL))::integer + ((document_id IS NOT NULL))::integer) + (((subject_type IS NOT NULL) AND (subject_id IS NOT NULL)))::integer) = 1))
 );
 
@@ -871,7 +1896,8 @@ CREATE TABLE public.call_transcripts (
     transcribed_at timestamp with time zone,
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, "left"(raw_text, 500000))) STORED
 );
 
 
@@ -942,7 +1968,8 @@ CREATE TABLE public.documents (
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, document_type, summary, "left"(body, 500000), source_path]))) STORED
 );
 
 
@@ -984,6 +2011,7 @@ CREATE TABLE public.extracted_facts (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
     document_id uuid,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[key, value_text, "left"(source_excerpt, 50000)]))) STORED,
     CONSTRAINT extracted_facts_check CHECK (((value_text IS NOT NULL) OR (value_json IS NOT NULL))),
     CONSTRAINT extracted_facts_confidence_check CHECK (((confidence IS NULL) OR ((confidence >= (0)::numeric) AND (confidence <= (1)::numeric))))
 );
@@ -1028,6 +2056,7 @@ CREATE TABLE public.interactions (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[subject, "left"(body, 250000), location]))) STORED,
     CONSTRAINT interactions_check CHECK (((ended_at IS NULL) OR (ended_at >= occurred_at))),
     CONSTRAINT interactions_duration_seconds_check CHECK (((duration_seconds IS NULL) OR (duration_seconds >= 0)))
 );
@@ -1063,7 +2092,8 @@ CREATE TABLE public.organization_research_profiles (
     raw_enrichment jsonb DEFAULT '{}'::jsonb NOT NULL,
     researched_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[canonical_name, website, (domain)::text, one_line_description, category, healthcare_relevance, partnership_fit, partnership_fit_rationale, (offerings)::text, (likely_use_cases)::text, (integration_signals)::text, (compliance_signals)::text, (key_public_people)::text, (suggested_tags)::text, (review_flags)::text]))) STORED
 );
 
 
@@ -1076,7 +2106,7 @@ CREATE TABLE public.organizations (
     name text NOT NULL,
     slug text,
     legal_name text,
-    domain public.citext,
+    domain public.citext NOT NULL,
     website text,
     description text,
     industry text,
@@ -1087,7 +2117,8 @@ CREATE TABLE public.organizations (
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, legal_name, (domain)::text, website, description, industry, hq_city, hq_region, hq_country, notes]))) STORED
 );
 
 
@@ -1112,6 +2143,7 @@ CREATE TABLE public.partnership_integrations (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[integration_type, status, sync_direction, (data_formats)::text, notes]))) STORED,
     CONSTRAINT partnership_integrations_data_formats_check CHECK ((jsonb_typeof(data_formats) = ANY (ARRAY['array'::text, 'object'::text]))),
     CONSTRAINT partnership_integrations_integration_type_check CHECK ((integration_type = ANY (ARRAY['api'::text, 'webhook'::text, 'sftp'::text, 'manual_upload'::text, 'pdf_import'::text, 'email'::text, 'portal'::text, 'other'::text]))),
     CONSTRAINT partnership_integrations_status_check CHECK ((status = ANY (ARRAY['not_started'::text, 'sandbox'::text, 'building'::text, 'testing'::text, 'production'::text, 'paused'::text, 'retired'::text]))),
@@ -1136,6 +2168,7 @@ CREATE TABLE public.partnership_services (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, service_type, status, clinical_use, (data_modalities)::text]))) STORED,
     CONSTRAINT partnership_services_data_modalities_check CHECK ((jsonb_typeof(data_modalities) = ANY (ARRAY['array'::text, 'object'::text]))),
     CONSTRAINT partnership_services_status_check CHECK ((status = ANY (ARRAY['proposed'::text, 'validating'::text, 'build_ready'::text, 'live'::text, 'paused'::text, 'retired'::text])))
 );
@@ -1163,6 +2196,7 @@ CREATE TABLE public.partnerships (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, partnership_type, stage, priority, strategic_rationale, commercial_model, status_notes]))) STORED,
     CONSTRAINT partnerships_check CHECK (((launched_at IS NULL) OR (signed_at IS NULL) OR (launched_at >= signed_at))),
     CONSTRAINT partnerships_priority_check CHECK ((priority = ANY (ARRAY['low'::text, 'medium'::text, 'high'::text, 'strategic'::text]))),
     CONSTRAINT partnerships_stage_check CHECK ((stage = ANY (ARRAY['prospect'::text, 'intro'::text, 'discovery'::text, 'diligence'::text, 'pilot'::text, 'contracting'::text, 'live'::text, 'paused'::text, 'lost'::text])))
@@ -1180,7 +2214,7 @@ CREATE TABLE public.people (
     family_name text,
     display_name text,
     preferred_name text,
-    primary_email public.citext,
+    primary_email public.citext NOT NULL,
     primary_phone text,
     headline text,
     summary text,
@@ -1194,7 +2228,8 @@ CREATE TABLE public.people (
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    updated_at timestamp with time zone DEFAULT now() NOT NULL
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes]))) STORED
 );
 
 
@@ -1316,7 +2351,7 @@ CREATE VIEW public.partner_integration_board AS
              JOIN public.partnerships p ON ((p.id = pi.partnership_id)))
              JOIN public.organizations o ON ((o.id = p.organization_id)))
              LEFT JOIN public.partnership_services ps ON (((ps.id = pi.service_id) AND (ps.archived_at IS NULL))))
-             LEFT JOIN public.people owner ON ((owner.id = p.owner_person_id)))
+             LEFT JOIN public.people owner ON (((owner.id = p.owner_person_id) AND (owner.archived_at IS NULL))))
           WHERE ((p.archived_at IS NULL) AND (o.archived_at IS NULL) AND (pi.archived_at IS NULL))
         ), unmapped_cards AS (
          SELECT
@@ -1402,7 +2437,7 @@ CREATE VIEW public.partner_integration_board AS
            FROM (((public.partnerships p
              JOIN public.organizations o ON ((o.id = p.organization_id)))
              LEFT JOIN public.partnership_services ps ON (((ps.partnership_id = p.id) AND (ps.archived_at IS NULL))))
-             LEFT JOIN public.people owner ON ((owner.id = p.owner_person_id)))
+             LEFT JOIN public.people owner ON (((owner.id = p.owner_person_id) AND (owner.archived_at IS NULL))))
           WHERE ((p.archived_at IS NULL) AND (o.archived_at IS NULL) AND (NOT (EXISTS ( SELECT 1
                    FROM public.partnership_integrations pi
                   WHERE ((pi.partnership_id = p.id) AND (pi.archived_at IS NULL))))))
@@ -1706,6 +2741,7 @@ CREATE TABLE public.semantic_embeddings (
     embedded_at timestamp with time zone DEFAULT now() NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, content)) STORED,
     CONSTRAINT semantic_embeddings_chunk_index_check CHECK ((chunk_index >= 0)),
     CONSTRAINT semantic_embeddings_content_check CHECK ((length(TRIM(BOTH FROM content)) > 0)),
     CONSTRAINT semantic_embeddings_content_sha256_check CHECK ((content_sha256 ~ '^[a-f0-9]{64}$'::text)),
@@ -1727,6 +2763,61 @@ CREATE TABLE public.sources (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
+
+
+--
+-- Name: suspect_organization_imports; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.suspect_organization_imports AS
+ SELECT o.id,
+    o.name,
+    o.domain,
+    assessment.registrable_domain,
+    assessment.reason_codes,
+    source_match.source_slug,
+    o.created_at,
+    o.updated_at
+   FROM ((public.organizations o
+     LEFT JOIN LATERAL ( SELECT s.slug AS source_slug
+           FROM (public.external_identities ei
+             JOIN public.sources s ON ((s.id = ei.source_id)))
+          WHERE ((ei.entity_type = 'organization'::public.entity_type) AND (ei.entity_id = o.id))
+          ORDER BY (s.slug = 'gmail'::text) DESC, ei.created_at
+         LIMIT 1) source_match ON (true))
+     CROSS JOIN LATERAL public.crm_assess_organization_domain_import(COALESCE(source_match.source_slug, 'manual'::text), o.name, (o.domain)::text, NULL::text) assessment(normalized_name, normalized_domain, registrable_domain, should_create_organization, should_link_registrable_organization, reason_codes))
+  WHERE ((o.archived_at IS NULL) AND (NOT assessment.should_create_organization));
+
+
+--
+-- Name: VIEW suspect_organization_imports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.suspect_organization_imports IS 'Active organizations that would fail current email-domain import guardrails; review before cleanup, merge, or archival.';
+
+
+--
+-- Name: suspect_people_imports; Type: VIEW; Schema: public; Owner: -
+--
+
+CREATE VIEW public.suspect_people_imports AS
+ SELECT p.id,
+    p.full_name,
+    p.primary_email,
+    assessment.normalized_name,
+    assessment.reason_codes,
+    p.created_at,
+    p.updated_at
+   FROM (public.people p
+     CROSS JOIN LATERAL public.crm_assess_person_import(p.full_name, (p.primary_email)::text) assessment(normalized_name, should_create_person, reason_codes))
+  WHERE ((p.archived_at IS NULL) AND (NOT assessment.should_create_person));
+
+
+--
+-- Name: VIEW suspect_people_imports; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON VIEW public.suspect_people_imports IS 'Active people that would fail the current email/contact import guardrails; review before cleanup or archival.';
 
 
 --
@@ -1830,6 +2921,7 @@ CREATE TABLE public.task_comments (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, "left"(body, 250000))) STORED,
     CONSTRAINT task_comments_body_check CHECK ((length(TRIM(BOTH FROM body)) > 0)),
     CONSTRAINT task_comments_body_format_check CHECK ((body_format = ANY (ARRAY['markdown'::text, 'plain_text'::text, 'other'::text]))),
     CONSTRAINT task_comments_check CHECK (((parent_comment_id IS NULL) OR (parent_comment_id <> id)))
@@ -1924,6 +3016,7 @@ CREATE TABLE public.task_projects (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, summary, description, status_name, priority_label]))) STORED,
     CONSTRAINT task_projects_check CHECK (((target_date IS NULL) OR (start_date IS NULL) OR (target_date >= start_date))),
     CONSTRAINT task_projects_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0)),
     CONSTRAINT task_projects_priority_value_check CHECK (((priority_value >= 0) AND (priority_value <= 4))),
@@ -2090,7 +3183,7 @@ COMMENT ON TABLE public.task_teams IS 'Task workflow containers, optionally impo
 -- Name: COLUMN task_teams.key; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.task_teams.key IS 'Short issue prefix or team key, for example PIC.';
+COMMENT ON COLUMN public.task_teams.key IS 'Short issue prefix or team key, for example ENG.';
 
 
 --
@@ -2146,6 +3239,7 @@ CREATE TABLE public.tasks (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, "left"(description, 250000), source_identifier, priority_label, git_branch_name]))) STORED,
     CONSTRAINT tasks_check CHECK (((completed_at IS NULL) OR (canceled_at IS NULL))),
     CONSTRAINT tasks_check1 CHECK (((parent_task_id IS NULL) OR (parent_task_id <> id))),
     CONSTRAINT tasks_estimate_check CHECK (((estimate IS NULL) OR (estimate >= (0)::numeric))),
@@ -2215,7 +3309,7 @@ COMMENT ON COLUMN public.tasks.source_external_id IS 'Stable upstream task ID fr
 -- Name: COLUMN tasks.source_identifier; Type: COMMENT; Schema: public; Owner: -
 --
 
-COMMENT ON COLUMN public.tasks.source_identifier IS 'Human-readable task identifier such as PIC-226.';
+COMMENT ON COLUMN public.tasks.source_identifier IS 'Human-readable task identifier such as ENG-226.';
 
 
 --
@@ -2257,6 +3351,7 @@ CREATE TABLE public.team_members (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, title, (email)::text]))) STORED,
     CONSTRAINT team_members_email_check CHECK ((length(TRIM(BOTH FROM (email)::text)) > 0)),
     CONSTRAINT team_members_name_check CHECK ((length(TRIM(BOTH FROM name)) > 0))
 );
@@ -2813,7 +3908,7 @@ CREATE INDEX idx_ai_notes_interaction ON public.ai_notes USING btree (interactio
 -- Name: idx_ai_notes_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_ai_notes_search_fts ON public.ai_notes USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, "left"(content, 250000)])));
+CREATE INDEX idx_ai_notes_search_fts ON public.ai_notes USING gin (search_tsv);
 
 
 --
@@ -2834,7 +3929,7 @@ CREATE INDEX idx_call_transcripts_interaction ON public.call_transcripts USING b
 -- Name: idx_call_transcripts_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_call_transcripts_search_fts ON public.call_transcripts USING gin (to_tsvector('english'::regconfig, "left"(raw_text, 500000)));
+CREATE INDEX idx_call_transcripts_search_fts ON public.call_transcripts USING gin (search_tsv);
 
 
 --
@@ -2901,6 +3996,13 @@ CREATE INDEX idx_document_people_role ON public.document_people USING btree (rol
 
 
 --
+-- Name: idx_documents_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_documents_archived ON public.documents USING btree (archived_at) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_documents_authored_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -2932,7 +4034,7 @@ CREATE INDEX idx_documents_occurred_at ON public.documents USING btree (occurred
 -- Name: idx_documents_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_documents_search_fts ON public.documents USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, document_type, summary, "left"(body, 500000), source_path]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_documents_search_fts ON public.documents USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -2974,7 +4076,7 @@ CREATE INDEX idx_extracted_facts_observed ON public.extracted_facts USING btree 
 -- Name: idx_extracted_facts_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_extracted_facts_search_fts ON public.extracted_facts USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[key, value_text, "left"(source_excerpt, 50000)])));
+CREATE INDEX idx_extracted_facts_search_fts ON public.extracted_facts USING gin (search_tsv);
 
 
 --
@@ -2999,6 +4101,13 @@ CREATE INDEX idx_interaction_participants_person ON public.interaction_participa
 
 
 --
+-- Name: idx_interactions_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_interactions_archived ON public.interactions USING btree (archived_at) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_interactions_occurred_at; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3009,7 +4118,7 @@ CREATE INDEX idx_interactions_occurred_at ON public.interactions USING btree (oc
 -- Name: idx_interactions_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_interactions_search_fts ON public.interactions USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[subject, "left"(body, 250000), location]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_interactions_search_fts ON public.interactions USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3030,7 +4139,7 @@ CREATE INDEX idx_interactions_type ON public.interactions USING btree (type);
 -- Name: idx_org_research_profiles_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_org_research_profiles_search_fts ON public.organization_research_profiles USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[canonical_name, website, (domain)::text, one_line_description, category, healthcare_relevance, partnership_fit, partnership_fit_rationale, (offerings)::text, (likely_use_cases)::text, (integration_signals)::text, (compliance_signals)::text, (key_public_people)::text, (suggested_tags)::text, (review_flags)::text])));
+CREATE INDEX idx_org_research_profiles_search_fts ON public.organization_research_profiles USING gin (search_tsv);
 
 
 --
@@ -3062,13 +4171,6 @@ CREATE INDEX idx_organizations_archived ON public.organizations USING btree (arc
 
 
 --
--- Name: idx_organizations_domain; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_organizations_domain ON public.organizations USING btree (domain);
-
-
---
 -- Name: idx_organizations_name; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3086,7 +4188,7 @@ CREATE INDEX idx_organizations_name_trgm ON public.organizations USING gin (lowe
 -- Name: idx_organizations_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_organizations_search_fts ON public.organizations USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, legal_name, (domain)::text, website, description, industry, hq_city, hq_region, hq_country, notes]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_organizations_search_fts ON public.organizations USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3108,6 +4210,13 @@ CREATE INDEX idx_partnership_documents_partnership ON public.partnership_documen
 --
 
 CREATE INDEX idx_partnership_documents_role ON public.partnership_documents USING btree (role);
+
+
+--
+-- Name: idx_partnership_integrations_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_partnership_integrations_archived ON public.partnership_integrations USING btree (archived_at) WHERE (archived_at IS NULL);
 
 
 --
@@ -3135,7 +4244,7 @@ CREATE INDEX idx_partnership_integrations_partnership ON public.partnership_inte
 -- Name: idx_partnership_integrations_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_partnership_integrations_search_fts ON public.partnership_integrations USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[integration_type, status, sync_direction, (data_formats)::text, notes]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_partnership_integrations_search_fts ON public.partnership_integrations USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3209,6 +4318,13 @@ CREATE INDEX idx_partnership_people_role ON public.partnership_people USING btre
 
 
 --
+-- Name: idx_partnership_services_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_partnership_services_archived ON public.partnership_services USING btree (archived_at) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_partnership_services_metadata; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3233,7 +4349,7 @@ CREATE INDEX idx_partnership_services_partnership ON public.partnership_services
 -- Name: idx_partnership_services_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_partnership_services_search_fts ON public.partnership_services USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, service_type, status, clinical_use, (data_modalities)::text]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_partnership_services_search_fts ON public.partnership_services USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3248,6 +4364,13 @@ CREATE INDEX idx_partnership_services_status ON public.partnership_services USIN
 --
 
 CREATE INDEX idx_partnership_services_type ON public.partnership_services USING btree (service_type);
+
+
+--
+-- Name: idx_partnerships_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_partnerships_archived ON public.partnerships USING btree (archived_at) WHERE (archived_at IS NULL);
 
 
 --
@@ -3282,7 +4405,7 @@ CREATE INDEX idx_partnerships_priority ON public.partnerships USING btree (prior
 -- Name: idx_partnerships_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_partnerships_search_fts ON public.partnerships USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, partnership_type, stage, priority, strategic_rationale, commercial_model, status_notes]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_partnerships_search_fts ON public.partnerships USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3328,17 +4451,10 @@ CREATE INDEX idx_people_full_name_trgm ON public.people USING gin (lower(full_na
 
 
 --
--- Name: idx_people_primary_email; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX idx_people_primary_email ON public.people USING btree (primary_email);
-
-
---
 -- Name: idx_people_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_people_search_fts ON public.people USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_people_search_fts ON public.people USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3370,10 +4486,17 @@ CREATE INDEX idx_rel_edges_target ON public.relationship_edges USING btree (targ
 
 
 --
+-- Name: idx_semantic_embeddings_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_semantic_embeddings_archived ON public.semantic_embeddings USING btree (archived_at) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_semantic_embeddings_content_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_semantic_embeddings_content_fts ON public.semantic_embeddings USING gin (to_tsvector('english'::regconfig, content)) WHERE (archived_at IS NULL);
+CREATE INDEX idx_semantic_embeddings_content_fts ON public.semantic_embeddings USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3405,6 +4528,13 @@ CREATE INDEX idx_taggings_target ON public.taggings USING btree (target_type, ta
 
 
 --
+-- Name: idx_task_attachments_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_attachments_archived ON public.task_attachments USING btree (archived_at) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_task_attachments_metadata; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3416,6 +4546,13 @@ CREATE INDEX idx_task_attachments_metadata ON public.task_attachments USING gin 
 --
 
 CREATE INDEX idx_task_attachments_task ON public.task_attachments USING btree (task_id);
+
+
+--
+-- Name: idx_task_comments_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_comments_archived ON public.task_comments USING btree (archived_at) WHERE (archived_at IS NULL);
 
 
 --
@@ -3443,7 +4580,7 @@ CREATE INDEX idx_task_comments_parent ON public.task_comments USING btree (paren
 -- Name: idx_task_comments_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_task_comments_search_fts ON public.task_comments USING gin (to_tsvector('english'::regconfig, "left"(body, 250000))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_task_comments_search_fts ON public.task_comments USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3465,6 +4602,13 @@ CREATE INDEX idx_task_comments_task ON public.task_comments USING btree (task_id
 --
 
 CREATE INDEX idx_task_project_teams_team ON public.task_project_teams USING btree (team_id);
+
+
+--
+-- Name: idx_task_projects_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_projects_archived ON public.task_projects USING btree (archived_at) WHERE (archived_at IS NULL);
 
 
 --
@@ -3499,7 +4643,7 @@ CREATE INDEX idx_task_projects_priority ON public.task_projects USING btree (pri
 -- Name: idx_task_projects_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_task_projects_search_fts ON public.task_projects USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, summary, description, status_name, priority_label]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_task_projects_search_fts ON public.task_projects USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3514,6 +4658,13 @@ CREATE INDEX idx_task_projects_source ON public.task_projects USING btree (sourc
 --
 
 CREATE INDEX idx_task_projects_status ON public.task_projects USING btree (status_type);
+
+
+--
+-- Name: idx_task_relations_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_relations_archived ON public.task_relations USING btree (archived_at) WHERE (archived_at IS NULL);
 
 
 --
@@ -3535,6 +4686,13 @@ CREATE INDEX idx_task_relations_related ON public.task_relations USING btree (re
 --
 
 CREATE INDEX idx_task_relations_type ON public.task_relations USING btree (relation_type);
+
+
+--
+-- Name: idx_task_statuses_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_statuses_archived ON public.task_statuses USING btree (archived_at) WHERE (archived_at IS NULL);
 
 
 --
@@ -3566,6 +4724,13 @@ CREATE INDEX idx_task_statuses_type ON public.task_statuses USING btree (status_
 
 
 --
+-- Name: idx_task_teams_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_task_teams_archived ON public.task_teams USING btree (archived_at) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_task_teams_metadata; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3584,6 +4749,13 @@ CREATE INDEX idx_task_teams_source ON public.task_teams USING btree (source_id);
 --
 
 CREATE INDEX idx_tasks_active_updated_at ON public.tasks USING btree (updated_at DESC) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_tasks_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_tasks_archived ON public.tasks USING btree (archived_at) WHERE (archived_at IS NULL);
 
 
 --
@@ -3639,7 +4811,7 @@ CREATE INDEX idx_tasks_project_status ON public.tasks USING btree (project_id, s
 -- Name: idx_tasks_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_tasks_search_fts ON public.tasks USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[title, "left"(description, 250000), source_identifier, priority_label, git_branch_name]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_tasks_search_fts ON public.tasks USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3678,6 +4850,13 @@ CREATE INDEX idx_team_members_active ON public.team_members USING btree (is_acti
 
 
 --
+-- Name: idx_team_members_archived; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_team_members_archived ON public.team_members USING btree (archived_at) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_team_members_metadata; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3695,7 +4874,7 @@ CREATE INDEX idx_team_members_name_trgm ON public.team_members USING gin (lower(
 -- Name: idx_team_members_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE INDEX idx_team_members_search_fts ON public.team_members USING gin (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[name, title, (email)::text]))) WHERE (archived_at IS NULL);
+CREATE INDEX idx_team_members_search_fts ON public.team_members USING gin (search_tsv) WHERE (archived_at IS NULL);
 
 
 --
@@ -3734,6 +4913,13 @@ CREATE UNIQUE INDEX uq_interaction_participants_person ON public.interaction_par
 
 
 --
+-- Name: uq_organizations_domain; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_organizations_domain ON public.organizations USING btree (domain);
+
+
+--
 -- Name: uq_partnership_services_active_name; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -3745,6 +4931,13 @@ CREATE UNIQUE INDEX uq_partnership_services_active_name ON public.partnership_se
 --
 
 CREATE UNIQUE INDEX uq_partnerships_active_org_name ON public.partnerships USING btree (organization_id, lower(name)) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: uq_people_primary_email; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX uq_people_primary_email ON public.people USING btree (primary_email);
 
 
 --

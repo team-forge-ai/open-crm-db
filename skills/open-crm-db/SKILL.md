@@ -58,7 +58,9 @@ responses. Summarize row counts and IDs instead.
 Prefer idempotent writes:
 
 - For people/orgs: resolve by `external_identities`, then email/domain, then
-  cautious fuzzy matching.
+  cautious fuzzy matching. Use `crm_import_person_from_email(...)` and
+  `crm_import_organization_from_email(...)` for untrusted email/calendar
+  imports.
 - For interactions: use `(source_id, source_external_id)`.
 - For transcripts: use `(source_id, source_external_id)` when available, else
   `interaction_id`.

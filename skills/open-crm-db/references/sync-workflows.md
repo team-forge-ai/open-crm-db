@@ -46,35 +46,38 @@ limit 10;
 ## Create Person With Email
 
 ```sql
-with src as (
-  select id from sources where slug = :'source_slug'
-),
-person_row as (
-  insert into people (full_name, primary_email, metadata)
-  select :'full_name', :'email', '{}'::jsonb
-  where not exists (
-    select 1
-    from people p
-    left join person_emails e on e.person_id = p.id
-    where p.primary_email = :'email' or e.email = :'email'
-  )
-  returning id
-),
-resolved as (
-  select id from person_row
-  union all
-  select p.id
-  from people p
-  left join person_emails e on e.person_id = p.id
-  where p.primary_email = :'email' or e.email = :'email'
-  limit 1
-)
-insert into person_emails (person_id, email, label, is_primary, source_id)
-select id, :'email', 'work', true, (select id from src)
-from resolved
-on conflict (person_id, email) do nothing
-returning person_id;
+select *
+from crm_import_person_from_email(
+  :'source_slug',
+  :'full_name',
+  :'email',
+  coalesce(nullif(:'external_kind', ''), 'contact'),
+  nullif(:'external_id', ''),
+  '{}'::jsonb
+);
 ```
+
+If `person_id` is null, do not create a CRM person for that sender or
+attendee. Use the returned `reason_codes` to decide whether to link an
+organization by email domain, keep the raw handle in interaction metadata, or
+ignore a machine notification sender.
+
+## Create Organization From Email Domain
+
+```sql
+select *
+from crm_import_organization_from_email(
+  :'source_slug',
+  :'organization_name',
+  :'email',
+  coalesce(nullif(:'external_kind', ''), 'email_domain'),
+  nullif(:'external_id', ''),
+  '{}'::jsonb
+);
+```
+
+If `organization_id` is null, do not create a standalone organization for that
+domain. Preserve the raw email/domain in interaction metadata for later review.
 
 ## Upsert Interaction
 

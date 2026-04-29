@@ -97,6 +97,9 @@ skills/             optional self-contained local AI skill for safe operations
 - After a successful `migrate up` or `migrate down`, the CLI refreshes
   `schema.sql` with `pg_dump --schema-only --no-owner --no-privileges`.
   Override the output path with `OPEN_CRM_DB_SCHEMA_DUMP_PATH`.
+- Recent migrations make `people.primary_email` and `organizations.domain`
+  required and unique. Existing databases must resolve rows missing those
+  values before applying the migrations.
 
 ## Schema
 
@@ -124,6 +127,14 @@ Top-level entities:
 Convenience views:
 
 - `partner_integration_board` — kanban-oriented partner integration status
+
+Identity constraints:
+
+- `people.primary_email` is required and unique.
+- `organizations.domain` is required and unique.
+- For untrusted email/calendar imports, use the SQL guardrail helpers
+  `crm_import_person_from_email(...)` and
+  `crm_import_organization_from_email(...)` instead of inserting directly.
 
 The task schema (`tasks`, `task_teams`, `task_statuses`, `task_projects`,
 `task_comments`, `task_attachments`, `task_relations`) is a generic

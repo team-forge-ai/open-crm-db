@@ -61,6 +61,30 @@ match**. In order of preference:
 3. `organizations.domain` (citext) for companies, falling back to a fuzzy name
    match guarded by a high similarity threshold.
 
+`people.primary_email` and `organizations.domain` are required and unique. Do
+not create placeholder rows without those values; keep uncertain handles or
+domains in interaction metadata until they can be resolved.
+
+For people discovered from untrusted email or calendar display names, call
+`crm_import_person_from_email(...)` instead of inserting into `people`
+directly. It resolves existing identities and emails, normalizes quoted
+`Last, First` names, and refuses to create new people for machine senders,
+route-style names such as `via Docusign`, email-address-as-name values,
+high-entropy generated localparts, generic inboxes, or names that do not look
+like a capitalized first and last name. If it returns `person_id = null`,
+preserve the raw sender/attendee data in interaction metadata or link the
+organization by domain rather than creating a CRM person.
+
+For organizations discovered from untrusted email domains, call
+`crm_import_organization_from_email(...)` instead of inserting into
+`organizations` directly. It extracts and normalizes the email domain, resolves
+existing active identities and exact domains, links suspicious subdomains to an
+existing active registrable/root organization when one exists, and refuses to
+create new organizations for public webmail domains, machine sender domains,
+delivery infrastructure, or subdomains from email/calendar sources. If it
+returns `organization_id = null`, preserve the raw email/domain in interaction
+metadata for later review rather than creating a standalone organization.
+
 If you create a new entity, immediately record the originating external ID in
 `external_identities` so the next ingestion run finds it.
 

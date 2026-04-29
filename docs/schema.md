@@ -49,9 +49,9 @@ available or `metadata` when not.
 
 ### `organizations`
 
-Companies, institutions, counterparties. Identified by `name` plus optional
-`domain` (citext) and `slug`. Use `external_identities` to record IDs from
-HubSpot, Google Contacts, etc.
+Companies, institutions, counterparties. Identified by required unique `domain`
+(citext) plus `name` and optional `slug`. Use `external_identities` to record
+IDs from HubSpot, Google Contacts, etc.
 
 ### `organization_research_profiles`
 
@@ -69,8 +69,9 @@ profiles. Durable source-backed claims should still be appended to
 
 ### `people`
 
-Individual humans. `primary_email` is convenience; the canonical list lives in
-`person_emails`. `primary_phone` likewise relates to `person_phones`.
+Individual humans. `primary_email` is required and unique convenience; the
+canonical list lives in `person_emails`. `primary_phone` likewise relates to
+`person_phones`.
 
 ### `person_emails` / `person_phones`
 
@@ -369,6 +370,49 @@ for hybrid retrieval.
 Direct source-record indexes cap very large text fields before building
 `tsvector` values to avoid Postgres' per-row size limit. Full long-form
 coverage should come from chunking content into `semantic_embeddings`.
+
+### Person import guardrails
+
+`crm_assess_person_import(raw_name, email)` normalizes untrusted email/calendar
+display names and returns `should_create_person` plus reason codes. It handles
+quoted `Last, First` names, machine/generated email senders, route phrases
+like `via Docusign`, email-address-as-name values, numeric token noise,
+generic team/support sender names, and names that are not capitalized
+first/last style.
+
+`crm_import_person_from_email(source_slug, raw_name, email, external_kind,
+external_id, metadata)` is the preferred SQL helper for creating people from
+email-derived imports. It first resolves existing external identities and
+emails, then creates a person only when the assessment passes. Failed
+assessments return `person_id = null` for new contacts.
+
+`suspect_people_imports` lists active `people` rows that would fail the current
+guardrails so import cleanup can be reviewed separately from ingestion.
+
+### Organization import guardrails
+
+`crm_normalize_import_domain(raw_domain)` normalizes imported domain or
+URL-like values into lowercase bare domains. `crm_registrable_import_domain`
+returns a best-effort registrable/root domain while handling common multi-label
+public suffixes such as `co.uk`, `ac.uk`, and `co.za`.
+
+`crm_assess_organization_domain_import(source_slug, raw_name, raw_domain,
+email)` evaluates untrusted domain-derived organization imports and returns
+normalized domain fields, `should_create_organization`,
+`should_link_registrable_organization`, and reason codes. It rejects invalid
+domains, public webmail domains, machine sender domains, delivery
+infrastructure domains, and true subdomains from email/calendar sources.
+
+`crm_import_organization_from_email(source_slug, raw_name, email,
+external_kind, external_id, metadata)` is the preferred SQL helper for creating
+organizations from email-derived imports. It resolves existing active external
+identities and exact domains, then links a suspicious subdomain to an existing
+active root organization when possible. Failed assessments return
+`organization_id = null` for new domains.
+
+`suspect_organization_imports` lists active `organizations` rows that would
+fail the current email-domain guardrails so cleanup can be reviewed separately
+from ingestion.
 
 ## Flexible structures
 
