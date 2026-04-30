@@ -82,6 +82,49 @@ select count(*) from interactions;
 select count(*) from call_transcripts;
 ```
 
+## CRM Enrichment Workflow
+
+When the user asks to enrich CRM records, assume you are responsible for
+enriching the CRM fields at runtime: gather evidence, decide the best
+structured values, write them to the CRM, and preserve provenance. Do not wait
+for a separate enrichment service unless the user explicitly asks for one.
+
+For organizations:
+
+1. Resolve the organization by `external_identities`, domain, or cautious name
+   matching.
+2. Fill stable public identity fields on `organizations` when supported by
+   evidence: `name`, `legal_name`, `domain`, `website`, `description`,
+   `industry`, `hq_city`, `hq_region`, and `hq_country`.
+3. Use `organization_research_profiles` for richer AI/public research:
+   one-line description, category, partnership fit, offerings, likely use
+   cases, integration/compliance signals, key public people, suggested tags,
+   review flags, source URLs, and raw enrichment.
+4. Keep provider-specific or run-specific details in `metadata`, but do not
+   hide important first-class fields there.
+
+For people:
+
+1. Resolve people by `external_identities`, email, or cautious matching.
+2. Store durable display/profile fields on `people`: `headline`, `summary`,
+   location fields, `linkedin_url`, `website`, and `notes` when appropriate.
+3. Store employment evidence on `affiliations`: `organization_id`, `title`,
+   `department`, `is_current`, `is_primary`, `role_family`, and `seniority`.
+   The `people.current_*`, `people.role_family`, and `people.seniority` fields
+   are synced from the best current affiliation by trigger.
+4. Treat `NULL` role/seniority as "not attempted"; write `unknown` only when a
+   classification attempt was made and no confident value could be resolved.
+
+For all enrichment:
+
+- Prefer source-backed facts from email signatures, calendar context, public
+  profiles, company websites, or trusted documents.
+- Append durable claims to `extracted_facts` with `source_id`,
+  `source_excerpt`, confidence, and source metadata when useful.
+- Do not overwrite richer human-entered values with lower-confidence AI
+  guesses. If evidence conflicts, add a review flag or fact rather than
+  silently replacing data.
+
 ## Search
 
 Use read-only SQL through `scripts/psql.sh` for CRM search. Prefer

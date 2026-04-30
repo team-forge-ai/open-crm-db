@@ -119,6 +119,81 @@ For task imports, use the source-backed unique indexes on `team_members`,
 `ENG-226`) in `tasks.source_identifier` and the upstream stable ID in
 `tasks.source_external_id` when the source exposes it.
 
+## Runtime CRM enrichment
+
+When an agent is invoked for enrichment work, assume you are responsible for
+enriching CRM fields at runtime: inspect the current record, gather source
+evidence, choose structured values, write the appropriate tables, and verify
+the result. Enrichment is not limited to importing upstream rows; it also
+includes filling first-class profile fields, structured metadata, research
+profiles, role classification, and append-only facts.
+
+For organizations, write stable identity and profile fields directly to
+`organizations` when evidence supports them: `name`, `legal_name`, `domain`,
+`website`, `description`, `industry`, `hq_city`, `hq_region`, and
+`hq_country`. Use `metadata` only for provider-specific, run-specific, or
+non-core details; do not bury values that have first-class columns.
+
+Use `organization_research_profiles` for richer AI/public research about an
+organization: canonical identity, one-line description, category, partnership
+fit, partnership rationale, offerings, likely use cases, integration and
+compliance signals, key public people, suggested tags, review flags, source
+URLs, and the raw enrichment payload. Treat
+`(organization_id, prompt_fingerprint)` as the idempotency key for a given
+research prompt. When the enrichment produces durable source-backed claims,
+also append `extracted_facts`.
+
+For people, write durable profile fields directly to `people` when supported:
+`headline`, `summary`, location fields, `timezone`, `linkedin_url`, `website`,
+and `notes`. Write employment and role evidence to `affiliations`, not just to
+the person row; `people.current_title`, `people.current_department`,
+`people.current_organization_id`, `people.role_family`, and `people.seniority`
+are cached from the best current affiliation by trigger.
+
+Never overwrite a richer human-entered or higher-confidence value with a weaker
+AI guess. If sources conflict, preserve the existing value, append an
+`extracted_facts` row or review flag, and surface the conflict in the summary.
+Do not infer sensitive personal attributes from titles, companies, or email
+domains.
+
+## Enriching titles, roles, and seniority
+
+Store human-readable role evidence on `affiliations.title` and
+`affiliations.department`; the `people.current_title`,
+`people.current_department`, and `people.current_organization_id` fields are
+denormalized from the best current affiliation by trigger. Do not update the
+person cache directly unless repairing data; update the affiliation instead.
+
+Classify `affiliations.role_family` and `affiliations.seniority` only when you
+have source evidence such as an email signature, public profile, contract, or
+meeting note. Use the same values on the canonical affiliation row; the person
+cache will follow automatically for the current primary role.
+
+Use `NULL` to mean classification has not been attempted. Use `unknown` only
+after an enrichment pass attempted classification and could not resolve a
+confident value. Do not write `unknown` as a default placeholder.
+
+Prefer conservative, coarse classifications:
+
+- `VP, Engineering` -> `role_family = 'engineering'`, `seniority = 'executive'`
+- `Staff Software Engineer` -> `role_family = 'engineering'`,
+  `seniority = 'individual_contributor'`
+- `Director of Marketing` -> `role_family = 'marketing'`,
+  `seniority = 'director'`
+- `Chief Operating Officer` -> `role_family = 'leadership'`,
+  `seniority = 'executive'`
+- `Medical Advisor` -> `role_family = 'health_professional'`,
+  `seniority = 'advisor'`
+
+If a title spans multiple functions, choose the primary business function for
+relationship management. For example, classify "Director, Business Development
+of Strategic Accounts" as `sales` rather than `leadership`; keep the exact
+wording in `title` and `department`.
+
+Append provenance-backed `extracted_facts` for durable role claims when useful,
+especially when the source is external or public. Never infer sensitive
+personal attributes from a job title.
+
 ## Recording a task
 
 Use `tasks` for internal operating work, optionally imported from an external

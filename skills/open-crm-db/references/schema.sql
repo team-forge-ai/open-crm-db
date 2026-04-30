@@ -132,6 +132,50 @@ CREATE TYPE public.participant_role AS ENUM (
 
 
 --
+-- Name: person_role_family; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.person_role_family AS ENUM (
+    'communications',
+    'customer_service',
+    'education',
+    'engineering',
+    'finance',
+    'health_professional',
+    'human_resources',
+    'information_technology',
+    'leadership',
+    'legal',
+    'marketing',
+    'operations',
+    'product',
+    'public_relations',
+    'real_estate',
+    'recruiting',
+    'research',
+    'sales',
+    'other',
+    'unknown'
+);
+
+
+--
+-- Name: person_seniority; Type: TYPE; Schema: public; Owner: -
+--
+
+CREATE TYPE public.person_seniority AS ENUM (
+    'executive',
+    'director',
+    'manager',
+    'individual_contributor',
+    'advisor',
+    'contractor',
+    'other',
+    'unknown'
+);
+
+
+--
 -- Name: relationship_edge_type; Type: TYPE; Schema: public; Owner: -
 --
 
@@ -160,6 +204,30 @@ CREATE TYPE public.transcript_format AS ENUM (
     'speaker_turns_jsonl',
     'other'
 );
+
+
+--
+-- Name: crm_affiliations_sync_person_current(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_affiliations_sync_person_current() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+  IF TG_OP = 'DELETE' THEN
+    PERFORM crm_sync_person_current_affiliation(OLD.person_id);
+    RETURN OLD;
+  END IF;
+
+  PERFORM crm_sync_person_current_affiliation(NEW.person_id);
+
+  IF TG_OP = 'UPDATE' AND OLD.person_id IS DISTINCT FROM NEW.person_id THEN
+    PERFORM crm_sync_person_current_affiliation(OLD.person_id);
+  END IF;
+
+  RETURN NEW;
+END;
+$$;
 
 
 --
@@ -914,6 +982,58 @@ CREATE FUNCTION public.crm_set_updated_at() RETURNS trigger
 BEGIN
   NEW.updated_at = NOW();
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: crm_sync_person_current_affiliation(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.crm_sync_person_current_affiliation(target_person_id uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+  current_affiliation record;
+BEGIN
+  SELECT
+    a.title,
+    a.department,
+    a.organization_id,
+    a.role_family,
+    a.seniority
+  INTO current_affiliation
+  FROM affiliations a
+  WHERE a.person_id = target_person_id
+    AND a.is_current = true
+    AND a.end_date IS NULL
+  ORDER BY
+    a.is_primary DESC,
+    (a.title IS NOT NULL AND a.title <> '') DESC,
+    a.updated_at DESC,
+    a.created_at DESC,
+    a.id DESC
+  LIMIT 1;
+
+  IF FOUND THEN
+    UPDATE people
+       SET current_title = current_affiliation.title,
+           current_department = current_affiliation.department,
+           current_organization_id = current_affiliation.organization_id,
+           role_family = current_affiliation.role_family,
+           seniority = current_affiliation.seniority,
+           updated_at = now()
+     WHERE id = target_person_id;
+  ELSE
+    UPDATE people
+       SET current_title = NULL,
+           current_department = NULL,
+           current_organization_id = NULL,
+           role_family = NULL,
+           seniority = NULL,
+           updated_at = now()
+     WHERE id = target_person_id;
+  END IF;
 END;
 $$;
 
@@ -1846,6 +1966,8 @@ CREATE TABLE public.affiliations (
     metadata jsonb DEFAULT '{}'::jsonb NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    role_family public.person_role_family,
+    seniority public.person_seniority,
     CONSTRAINT affiliations_check CHECK (((end_date IS NULL) OR (start_date IS NULL) OR (end_date >= start_date)))
 );
 
@@ -2229,7 +2351,12 @@ CREATE TABLE public.people (
     archived_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
-    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes]))) STORED
+    search_tsv tsvector GENERATED ALWAYS AS (to_tsvector('english'::regconfig, public.crm_search_text(VARIADIC ARRAY[full_name, display_name, preferred_name, headline, summary, city, region, country, timezone, website, notes]))) STORED,
+    current_title text,
+    current_department text,
+    current_organization_id uuid,
+    role_family public.person_role_family,
+    seniority public.person_seniority
 );
 
 
@@ -3884,6 +4011,20 @@ CREATE INDEX idx_affiliations_person ON public.affiliations USING btree (person_
 
 
 --
+-- Name: idx_affiliations_role_family; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_affiliations_role_family ON public.affiliations USING btree (role_family) WHERE is_current;
+
+
+--
+-- Name: idx_affiliations_seniority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_affiliations_seniority ON public.affiliations USING btree (seniority) WHERE is_current;
+
+
+--
 -- Name: idx_ai_notes_document; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4437,6 +4578,13 @@ CREATE INDEX idx_people_archived ON public.people USING btree (archived_at) WHER
 
 
 --
+-- Name: idx_people_current_organization; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_people_current_organization ON public.people USING btree (current_organization_id) WHERE ((archived_at IS NULL) AND (current_organization_id IS NOT NULL));
+
+
+--
 -- Name: idx_people_full_name; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -4451,10 +4599,24 @@ CREATE INDEX idx_people_full_name_trgm ON public.people USING gin (lower(full_na
 
 
 --
+-- Name: idx_people_role_family; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_people_role_family ON public.people USING btree (role_family) WHERE (archived_at IS NULL);
+
+
+--
 -- Name: idx_people_search_fts; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX idx_people_search_fts ON public.people USING gin (search_tsv) WHERE (archived_at IS NULL);
+
+
+--
+-- Name: idx_people_seniority; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX idx_people_seniority ON public.people USING btree (seniority) WHERE (archived_at IS NULL);
 
 
 --
@@ -5046,6 +5208,13 @@ CREATE UNIQUE INDEX uq_team_members_source_external_id ON public.team_members US
 
 
 --
+-- Name: affiliations trg_affiliations_sync_person_current; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER trg_affiliations_sync_person_current AFTER INSERT OR DELETE OR UPDATE ON public.affiliations FOR EACH ROW EXECUTE FUNCTION public.crm_affiliations_sync_person_current();
+
+
+--
 -- Name: affiliations trg_affiliations_updated_at; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -5599,6 +5768,14 @@ ALTER TABLE ONLY public.partnerships
 
 ALTER TABLE ONLY public.partnerships
     ADD CONSTRAINT partnerships_source_id_fkey FOREIGN KEY (source_id) REFERENCES public.sources(id) ON DELETE SET NULL;
+
+
+--
+-- Name: people people_current_organization_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.people
+    ADD CONSTRAINT people_current_organization_id_fkey FOREIGN KEY (current_organization_id) REFERENCES public.organizations(id) ON DELETE SET NULL;
 
 
 --

@@ -21,15 +21,17 @@ the generated `schema.sql` snapshot and the SQL migrations that produce it.
 
 ## Enums
 
-| Enum                     | Values                                                                                                                                          |
-| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------- |
-| `entity_type`            | `organization`, `person`                                                                                                                        |
-| `interaction_type`       | `call`, `meeting`, `email`, `message`, `note`, `event`, `document`, `other`                                                                     |
-| `interaction_direction`  | `inbound`, `outbound`, `internal`                                                                                                               |
-| `participant_role`       | `host`, `attendee`, `sender`, `recipient`, `cc`, `bcc`, `mentioned`, `observer`                                                                 |
-| `relationship_edge_type` | `introduced_by`, `reports_to`, `works_with`, `mentor_of`, `investor_of`, `customer_of`, `partner_of`, `parent_org_of`, `subsidiary_of`, `other` |
-| `ai_note_kind`           | `summary`, `action_items`, `highlights`, `sentiment`, `coaching`, `risk`, `other`                                                               |
-| `transcript_format`      | `plain_text`, `srt`, `vtt`, `speaker_turns_jsonl`, `other`                                                                                      |
+| Enum                     | Values                                                                                                                                                                                                                                                                                                 |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `entity_type`            | `organization`, `person`                                                                                                                                                                                                                                                                               |
+| `interaction_type`       | `call`, `meeting`, `email`, `message`, `note`, `event`, `document`, `other`                                                                                                                                                                                                                            |
+| `interaction_direction`  | `inbound`, `outbound`, `internal`                                                                                                                                                                                                                                                                      |
+| `participant_role`       | `host`, `attendee`, `sender`, `recipient`, `cc`, `bcc`, `mentioned`, `observer`                                                                                                                                                                                                                        |
+| `relationship_edge_type` | `introduced_by`, `reports_to`, `works_with`, `mentor_of`, `investor_of`, `customer_of`, `partner_of`, `parent_org_of`, `subsidiary_of`, `other`                                                                                                                                                        |
+| `ai_note_kind`           | `summary`, `action_items`, `highlights`, `sentiment`, `coaching`, `risk`, `other`                                                                                                                                                                                                                      |
+| `transcript_format`      | `plain_text`, `srt`, `vtt`, `speaker_turns_jsonl`, `other`                                                                                                                                                                                                                                             |
+| `person_role_family`     | `communications`, `customer_service`, `education`, `engineering`, `finance`, `health_professional`, `human_resources`, `information_technology`, `leadership`, `legal`, `marketing`, `operations`, `product`, `public_relations`, `real_estate`, `recruiting`, `research`, `sales`, `other`, `unknown` |
+| `person_seniority`       | `executive`, `director`, `manager`, `individual_contributor`, `advisor`, `contractor`, `other`, `unknown`                                                                                                                                                                                              |
 
 ## Core entities
 
@@ -73,6 +75,15 @@ Individual humans. `primary_email` is required and unique convenience; the
 canonical list lives in `person_emails`. `primary_phone` likewise relates to
 `person_phones`.
 
+`current_title`, `current_department`, `current_organization_id`,
+`role_family`, and `seniority` are denormalized convenience fields copied from
+the person's best current affiliation. They make CRM list views, search, and
+filtering fast, but employment history remains canonical in `affiliations`.
+The `trg_affiliations_sync_person_current` trigger keeps these cached fields
+aligned when affiliation rows change. For `role_family` and `seniority`, `NULL`
+means classification has not been attempted; `unknown` means classification
+was attempted but could not be resolved.
+
 ### `person_emails` / `person_phones`
 
 One row per handle per person. `(person_id, email)` and `(person_id, phone)`
@@ -82,9 +93,14 @@ inbound interactions are matched to people.
 ### `affiliations`
 
 Many-to-many between `people` and `organizations`, with `title`, `department`,
-`start_date`, `end_date`, `is_current`, `is_primary`. The unique partial index
-`uq_affiliations_primary_per_person` enforces at most one primary affiliation
-per person.
+`role_family`, `seniority`, `start_date`, `end_date`, `is_current`,
+`is_primary`. The unique partial index `uq_affiliations_primary_per_person`
+enforces at most one primary affiliation per person.
+
+`title` and `department` preserve the source-facing human-readable role.
+`role_family` and `seniority` are coarse normalized enums. Leave
+classification fields `NULL` until an enrichment/classification pass has
+attempted them; use `unknown` when the pass cannot resolve a confident value.
 
 When a person changes job, set `is_current = false` and `end_date` on the old
 affiliation, then insert a new row for the new role.
