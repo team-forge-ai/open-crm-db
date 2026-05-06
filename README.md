@@ -35,6 +35,11 @@ There is no web UI, no API server, and no application code beyond the CLI.
 - PostgreSQL 14+ with the `pgcrypto`, `citext`, `pg_trgm`, and (for semantic
   search) `vector` extensions
 
+For hosted Postgres, Neon is a good default for this project because its
+branching and point-in-time restore features make rollback workflows much
+easier when testing migrations, agent ingestion jobs, or destructive data
+cleanup.
+
 ## Install
 
 ```sh
